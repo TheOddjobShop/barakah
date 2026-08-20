@@ -131,9 +131,17 @@ public final class AppState {
         if config.athanEnabled {
             audio.play(prayer: prayer, settings: settings)
         } else {
-            athanFinished(prayer)
+            // Media was paused but no athan will play, so "resume when the athan
+            // ends" has nothing to hang off and would fire in the same instant —
+            // pausing and unpausing so fast the user only sees a glitch. Give the
+            // silence roughly the length an athan would have had instead.
+            athanFinished(prayer, silentAthanLength: Self.silentAthanLength)
         }
     }
+
+    /// How long a pause lasts when a prayer silences media without sounding an
+    /// athan. Two minutes is about the length of a spoken adhan.
+    private static let silentAthanLength: TimeInterval = 120
 
     /// Stop the athan on demand — from the menu bar, the athan window, or a
     /// keyboard shortcut. Resume policy still applies.
@@ -141,7 +149,7 @@ public final class AppState {
         audio.stop()
     }
 
-    private func athanFinished(_ prayer: PrayerKind) {
+    private func athanFinished(_ prayer: PrayerKind, silentAthanLength: TimeInterval = 0) {
         guard media.active != nil else {
             interruptionSummary = nil
             return
@@ -153,10 +161,14 @@ public final class AppState {
             interruptionSummary = nil
 
         case .afterAthan:
-            Task { await media.resume(); interruptionSummary = nil }
+            if silentAthanLength > 0 {
+                scheduleResume(after: silentAthanLength)
+            } else {
+                Task { await media.resume(); interruptionSummary = nil }
+            }
 
         case .afterMinutes(let minutes):
-            scheduleResume(after: TimeInterval(minutes * 60))
+            scheduleResume(after: TimeInterval(minutes * 60) + silentAthanLength)
 
         case .afterIqama:
             let iqama = scheduler.today?.prayer(prayer)?.iqama

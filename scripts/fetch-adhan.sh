@@ -20,6 +20,9 @@ set -euo pipefail
 
 DEST="${HOME}/Library/Application Support/Barakah/Athan"
 
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
 # name|description|licence|source page|download url
 CATALOGUE=(
 "adhan|Full adhan, field recording (1:42)|CC0 1.0|https://commons.wikimedia.org/wiki/File:Muslim_calling_to_prayer.ogg|https://upload.wikimedia.org/wikipedia/commons/a/a9/Muslim_calling_to_prayer.ogg"
@@ -51,13 +54,12 @@ usage() {
 
 fetch_one() {
   local name="$1" url="$2" licence="$3" page="$4"
-  local tmp; tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
+  local source="$WORK/$name.download"
 
   echo "==> Fetching $name"
   dim  "    $licence · $page"
   if ! curl -fsSL --retry 2 -A 'Barakah/0.1 (+https://github.com/justin06lee/barakah)' \
-       "$url" -o "$tmp/source"; then
+       "$url" -o "$source"; then
     echo "!!  Download failed for $name." >&2
     return 1
   fi
@@ -70,14 +72,14 @@ fetch_one() {
     # an alarm. Normalising to -16 LUFS brings them to a usable level without
     # crushing the dynamics of the call.
     echo "    normalising to -16 LUFS"
-    ffmpeg -nostdin -loglevel error -y -i "$tmp/source" \
+    ffmpeg -nostdin -loglevel error -y -i "$source" \
       -af 'loudnorm=I=-16:TP=-1.5:LRA=11' \
       -c:a aac -b:a 160k "$target"
   else
     echo "!!  ffmpeg not found — installing the original without normalisation."
     dim  "    It will be noticeably quiet. Install ffmpeg with: brew install ffmpeg"
     target="$DEST/$name.ogg"
-    cp "$tmp/source" "$target"
+    cp "$source" "$target"
   fi
 
   echo "    installed: $target"
