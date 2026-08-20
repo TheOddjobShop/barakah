@@ -9,13 +9,23 @@ public struct MediaInterruption: Sendable, Equatable {
     public var pausedPlayers: [String] = []
     /// True if a MediaRemote pause was issued.
     public var sentMediaRemotePause: Bool = false
+    /// True if audio was genuinely playing when the pause was sent — the
+    /// evidence that makes resuming safe.
+    public var mediaRemoteStoppedAudio: Bool = false
+    /// Applications observed producing audio at the moment of interruption.
+    public var sourcesAtInterruption: [String] = []
     /// True if system output was muted by us.
     public var mutedOutput: Bool = false
     /// Human description of what was playing, when we could tell.
     public var nowPlayingDescription: String?
 
     public var didAnything: Bool {
-        !pausedPlayers.isEmpty || sentMediaRemotePause || mutedOutput
+        !pausedPlayers.isEmpty || mediaRemoteStoppedAudio || mutedOutput
+    }
+
+    /// Whether anything here can be put back.
+    public var isResumable: Bool {
+        !pausedPlayers.isEmpty || mediaRemoteStoppedAudio || nowPlayingDescription != nil
     }
 
     /// One-line summary for the athan window, e.g. "Paused Spotify".
@@ -23,7 +33,7 @@ public struct MediaInterruption: Sendable, Equatable {
         var parts: [String] = []
         if !pausedPlayers.isEmpty {
             parts.append("Paused \(pausedPlayers.formattedList())")
-        } else if sentMediaRemotePause {
+        } else if mediaRemoteStoppedAudio {
             parts.append(nowPlayingDescription.map { "Paused \($0)" } ?? "Paused playback")
         }
         if mutedOutput { parts.append("output muted") }
@@ -73,6 +83,18 @@ public final class MediaController {
         var interruption = MediaInterruption()
         let excluded = Set(settings.mediaExcludedBundleIDs)
 
+        // Snapshot what is audibly playing *first*, through public CoreAudio.
+        // This is the only reliable account of what is going on: the private
+        // now-playing API refuses to answer unentitled apps on current macOS,
+        // and the per-process flag is sticky for a second or two after a pause,
+        // so it has to be read before anything is touched.
+        let playing = AudioActivity.outputtingApplications()
+            .filter { source in
+                guard let bundleID = source.bundleIdentifier else { return true }
+                return !excluded.contains(bundleID)
+            }
+        interruption.sourcesAtInterruption = playing.map(\.displayName)
+
         // Layer 1 — ask scriptable players directly. Done first because it is the
         // only layer that can tell us what was genuinely playing, which is what
         // makes an accurate resume possible.
@@ -88,7 +110,19 @@ public final class MediaController {
         // app that publishes to Now Playing.
         if settings.useMediaRemote, bridge.canSendCommands {
             let nowPlaying = await bridge.nowPlaying()
+
+            // Whatever is still making noise that the scriptable layer did not
+            // already stop.
+            let handledBundleIDs = Set(interruption.pausedPlayers)
+            let unhandled = playing.filter { source in
+                guard let bundleID = source.bundleIdentifier else { return true }
+                return !handledBundleIDs.contains(bundleID)
+            }
+
+            // Prefer the track title when macOS will give it to us, and fall
+            // back to the application name, which CoreAudio always will.
             interruption.nowPlayingDescription = nowPlaying?.displayDescription
+                ?? unhandled.first.map(\.displayName)
 
             let ownerExcluded = nowPlaying?.bundleIdentifier.map(excluded.contains) ?? false
             // Already handled by the precise layer above?
@@ -101,6 +135,10 @@ public final class MediaController {
                 // the middle of the adhan.
                 if bridge.send(.pause) {
                     interruption.sentMediaRemotePause = true
+                    // Anything still sounding that the scriptable layer did not
+                    // handle is what this pause was for. Sampled before the
+                    // pause, where the signal is immediate and accurate.
+                    interruption.mediaRemoteStoppedAudio = !unhandled.isEmpty
                 }
             }
         }
@@ -134,7 +172,12 @@ public final class MediaController {
             await scripts.play(player)
         }
 
-        if interruption.sentMediaRemotePause, interruption.nowPlayingDescription != nil {
+        // Resume only with positive evidence that this pause stopped something.
+        // Either the now-playing API named what was playing, or output audio was
+        // observed going silent when we paused. Absent both, staying quiet is the
+        // only safe choice — a blind `play` would start audio nobody asked for.
+        if interruption.sentMediaRemotePause,
+           interruption.mediaRemoteStoppedAudio || interruption.nowPlayingDescription != nil {
             bridge.send(.play)
         }
 
@@ -157,7 +200,9 @@ public final class MediaController {
             nowPlayingReadable: nowPlaying != nil,
             nowPlayingDescription: nowPlaying?.displayDescription,
             detectedPlayers: await scripts.playingPlayers().map(\.applicationName),
-            automationDenied: await scripts.hasDeniedPlayers
+            automationDenied: await scripts.hasDeniedPlayers,
+            audioSources: AudioActivity.outputtingApplications().map(\.displayName),
+            perProcessAudioSupported: AudioActivity.isSupported
         )
     }
 }
@@ -168,6 +213,10 @@ public struct MediaDiagnostics: Sendable, Equatable {
     public var nowPlayingDescription: String?
     public var detectedPlayers: [String]
     public var automationDenied: Bool
+    /// Applications CoreAudio reports as currently producing sound.
+    public var audioSources: [String] = []
+    /// Whether this macOS exposes the per-process audio API at all.
+    public var perProcessAudioSupported: Bool = true
 }
 
 extension Array where Element == String {

@@ -74,7 +74,16 @@ struct MediaSettingsView: View {
                         title: "Now Playing information",
                         detail: diagnostics.nowPlayingReadable
                             ? (diagnostics.nowPlayingDescription.map { "Reading: \($0)" } ?? "Readable.")
-                            : "macOS hides this from apps without a private entitlement. Pausing still works; Barakah just can't name what it paused."
+                            : "macOS hides this from apps without a private entitlement, so Barakah can't name what it paused. Pausing and resuming both still work."
+                    )
+                    DiagnosticRow(
+                        ok: diagnostics.perProcessAudioSupported,
+                        title: "Playback detection",
+                        detail: diagnostics.perProcessAudioSupported
+                            ? (diagnostics.audioSources.isEmpty
+                               ? "Working. Nothing is making sound right now."
+                               : "Playing now: \(diagnostics.audioSources.joined(separator: ", "))")
+                            : "Unavailable on this macOS. Barakah will still pause, but won't resume automatically."
                     )
                     DiagnosticRow(
                         ok: !diagnostics.automationDenied,
@@ -90,9 +99,9 @@ struct MediaSettingsView: View {
                         }
                         .controlSize(.small)
                     }
-                    LabeledContent("Playing right now") {
+                    LabeledContent("Directly controllable") {
                         Text(diagnostics.detectedPlayers.isEmpty
-                             ? "Nothing detected"
+                             ? "None playing"
                              : diagnostics.detectedPlayers.joined(separator: ", "))
                             .foregroundStyle(.secondary)
                     }

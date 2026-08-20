@@ -10,6 +10,10 @@ VERSION      := 0.1.0
 BUILD        := $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 
 BUILD_DIR    := .build
+# `swift build --arch` writes to apple/Products/Release; a plain build does not.
+BINARY        = $(shell test -f $(BUILD_DIR)/apple/Products/Release/$(APP) \
+                  && echo $(BUILD_DIR)/apple/Products/Release/$(APP) \
+                  || echo $(BUILD_DIR)/release/$(APP))
 DIST         := dist
 BUNDLE       := $(DIST)/$(APP).app
 CONTENTS     := $(BUNDLE)/Contents
@@ -28,18 +32,23 @@ CODESIGN_FLAGS := --force --entitlements $(ENTITLEMENTS)
 endif
 
 .DEFAULT_GOAL := all
-.PHONY: all build bundle icon install update run stop test clean \
-        reset-permissions adhan sign notarize dmg check
+.PHONY: all build build-universal bundle icon install update run stop test clean \
+        reset-permissions adhan sign notarize dmg check cask
 
 ## The whole golden path.
 all: stop reset-permissions bundle install run
 	@echo "==> $(APP) $(VERSION) is installed and running."
 	@echo "    Look for the crescent in your menu bar."
 
-## Compile the release binary.
+## Compile the release binary for this machine's architecture.
 build:
 	@echo "==> Building $(APP) $(VERSION) (build $(BUILD))"
 	@swift build -c release --disable-sandbox
+
+## Compile a universal binary, for anything that leaves this machine.
+build-universal:
+	@echo "==> Building $(APP) $(VERSION) universal (arm64 + x86_64)"
+	@swift build -c release --disable-sandbox --arch arm64 --arch x86_64
 
 ## Regenerate the .icns from the source SVG.
 icon: $(BUILD_DIR)/$(APP).icns
@@ -61,7 +70,7 @@ bundle: build icon
 	@echo "==> Assembling $(BUNDLE)"
 	@rm -rf $(BUNDLE)
 	@mkdir -p $(CONTENTS)/MacOS $(CONTENTS)/Resources/Athan
-	@cp $(BUILD_DIR)/release/$(APP) $(CONTENTS)/MacOS/$(APP)
+	@cp $(BINARY) $(CONTENTS)/MacOS/$(APP)
 	@cp $(BUILD_DIR)/$(APP).icns $(CONTENTS)/Resources/$(APP).icns
 	@sed -e 's|__VERSION__|$(VERSION)|' -e 's|__BUILD__|$(BUILD)|' \
 		Resources/Info.plist > $(CONTENTS)/Info.plist
@@ -129,16 +138,18 @@ adhan:
 	@./scripts/fetch-adhan.sh
 
 ## Package a distributable disk image.
-dmg: bundle
-	@echo "==> Building $(DIST)/$(APP)-$(VERSION).dmg"
-	@rm -f $(DIST)/$(APP)-$(VERSION).dmg
+dmg: build-universal
+	@$(MAKE) --no-print-directory bundle
+	@echo "==> Building $(DIST)/$(APP)_$(VERSION)_universal.dmg"
+	@rm -f $(DIST)/$(APP)_$(VERSION)_universal.dmg
 	@mkdir -p $(DIST)/dmg && rm -rf $(DIST)/dmg/*
 	@cp -R $(BUNDLE) $(DIST)/dmg/
 	@ln -s /Applications $(DIST)/dmg/Applications
 	@hdiutil create -volname "$(APP) $(VERSION)" -srcfolder $(DIST)/dmg \
-		-ov -format ULFO $(DIST)/$(APP)-$(VERSION).dmg >/dev/null
+		-ov -format ULFO $(DIST)/$(APP)_$(VERSION)_universal.dmg >/dev/null
 	@rm -rf $(DIST)/dmg
-	@echo "    $(DIST)/$(APP)-$(VERSION).dmg"
+	@lipo -archs $(CONTENTS)/MacOS/$(APP) | sed 's/^/    architectures: /'
+	@echo "    $(DIST)/$(APP)_$(VERSION)_universal.dmg"
 
 ## Notarize the disk image. Requires a Developer ID and a stored credential
 ## profile: xcrun notarytool store-credentials barakah --apple-id … --team-id …
@@ -146,11 +157,21 @@ notarize: dmg
 	@if [ "$(DEVELOPER_ID)" = "-" ]; then \
 		echo "!! Set DEVELOPER_ID to a Developer ID Application identity first."; exit 1; fi
 	@echo "==> Submitting for notarization"
-	@xcrun notarytool submit $(DIST)/$(APP)-$(VERSION).dmg \
+	@xcrun notarytool submit $(DIST)/$(APP)_$(VERSION)_universal.dmg \
 		--keychain-profile barakah --wait
-	@xcrun stapler staple $(DIST)/$(APP)-$(VERSION).dmg
-	@echo "    stapled: $(DIST)/$(APP)-$(VERSION).dmg"
+	@xcrun stapler staple $(DIST)/$(APP)_$(VERSION)_universal.dmg
+	@echo "    stapled: $(DIST)/$(APP)_$(VERSION)_universal.dmg"
 
 clean:
 	@rm -rf $(BUILD_DIR) $(DIST)
 	@echo "==> Cleaned"
+
+## Print the Homebrew cask for the built disk image, with its real checksum.
+## Paste the output into justin06lee/homebrew-tap/Casks/barakah.rb after the
+## GitHub release exists.
+cask:
+	@test -f $(DIST)/$(APP)_$(VERSION)_universal.dmg || { \
+		echo "!! No disk image yet. Run: make dmg"; exit 1; }
+	@sed -e 's|__VERSION__|$(VERSION)|' \
+	     -e "s|__SHA256__|$$(shasum -a 256 $(DIST)/$(APP)_$(VERSION)_universal.dmg | cut -d' ' -f1)|" \
+	     packaging/barakah.rb
