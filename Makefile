@@ -10,10 +10,13 @@ VERSION      := 0.1.0
 BUILD        := $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 
 BUILD_DIR    := .build
-# `swift build --arch` writes to apple/Products/Release; a plain build does not.
-BINARY        = $(shell test -f $(BUILD_DIR)/apple/Products/Release/$(APP) \
-                  && echo $(BUILD_DIR)/apple/Products/Release/$(APP) \
-                  || echo $(BUILD_DIR)/release/$(APP))
+# `swift build --arch` writes to apple/Products/Release; a plain build writes to
+# release/. Only one of the two exists at a time — `build` removes the universal
+# product before compiling — so whichever is present is the one just built. Left
+# ambiguous, a plain `make` after a `make dmg` would silently install the stale
+# universal binary.
+UNIVERSAL    := $(BUILD_DIR)/apple/Products/Release/$(APP)
+BINARY        = $(shell test -f $(UNIVERSAL) && echo $(UNIVERSAL) || echo $(BUILD_DIR)/release/$(APP))
 DIST         := dist
 BUNDLE       := $(DIST)/$(APP).app
 CONTENTS     := $(BUNDLE)/Contents
@@ -43,6 +46,7 @@ all: stop reset-permissions bundle install run
 ## Compile the release binary for this machine's architecture.
 build:
 	@echo "==> Building $(APP) $(VERSION) (build $(BUILD))"
+	@rm -f $(UNIVERSAL)
 	@swift build -c release --disable-sandbox
 
 ## Compile a universal binary, for anything that leaves this machine.
