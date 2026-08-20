@@ -26,7 +26,7 @@ It is a menu bar app: no Dock icon, no window unless you open one.
 
 Requires macOS 14 (Sonoma) or later.
 
-**Download the app** — [latest release](https://github.com/justin06lee/barakah/releases/latest).
+**Download the app** — [latest release](https://github.com/TheOddjobShop/barakah/releases/latest).
 Open the `.dmg` and drag Barakah into Applications.
 
 The first launch needs one extra step, because Barakah is not signed with a paid
@@ -51,7 +51,7 @@ brew install --cask justin06lee/tap/barakah
 **From source:**
 
 ```sh
-git clone https://github.com/justin06lee/barakah.git
+git clone https://github.com/TheOddjobShop/barakah.git
 cd barakah
 make
 ```
