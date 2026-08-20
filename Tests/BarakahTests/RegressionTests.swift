@@ -108,3 +108,69 @@ struct RegressionTests {
         #expect(event.key(in: calendar("Asia/Riyadh")).hasSuffix("2026-03-16"))
     }
 }
+
+/// Exercises `MediaController` without letting it touch the machine's audio:
+/// both pause strategies are switched off, so the calls run the whole
+/// orchestration path — including the serialisation — and change nothing.
+@Suite("Media controller serialisation")
+@MainActor
+struct MediaControllerTests {
+
+    private func inertSettings() -> SettingsData {
+        var settings = SettingsData()
+        settings.useMediaRemote = false
+        settings.useAppleScript = false
+        return settings
+    }
+
+    @Test("Concurrent interruptions do not orphan an interruption record")
+    func concurrentInterruptsSerialise() async {
+        let controller = MediaController()
+        let settings = inertSettings()
+
+        // Both used to observe `active == nil` before either had written to it,
+        // so the loser's paused players were never resumed — and if the loser
+        // had done the muting, output stayed muted through quit.
+        async let first = controller.interrupt(mode: .pause, settings: settings)
+        async let second = controller.interrupt(mode: .pause, settings: settings)
+        _ = await (first, second)
+
+        // With every strategy disabled nothing was actually interrupted, so the
+        // controller must hold no record to resume.
+        #expect(controller.active == nil)
+
+        await controller.resume()
+        #expect(controller.active == nil)
+    }
+
+    @Test("A mode of .off is a no-op")
+    func offDoesNothing() async {
+        let controller = MediaController()
+        let interruption = await controller.interrupt(mode: .off, settings: inertSettings())
+        #expect(!interruption.didAnything)
+        #expect(controller.active == nil)
+    }
+
+    @Test("A now-playing description alone is not grounds to resume")
+    func descriptionIsNotEvidence() {
+        // The exact shape that used to start a paused YouTube tab: a pause was
+        // sent, a description came back from the app holding Now Playing, but
+        // no audio was ever observed stopping.
+        var interruption = MediaInterruption()
+        interruption.sentMediaRemotePause = true
+        interruption.nowPlayingDescription = "Some Track — Some Artist"
+        interruption.mediaRemoteStoppedAudio = false
+
+        #expect(!interruption.didAnything,
+                "a pause that stopped nothing is not an interruption worth undoing")
+    }
+
+    @Test("Observed audio stopping is grounds to resume")
+    func stoppedAudioIsEvidence() {
+        var interruption = MediaInterruption()
+        interruption.sentMediaRemotePause = true
+        interruption.mediaRemoteStoppedAudio = true
+        #expect(interruption.didAnything)
+        #expect(interruption.isResumable)
+    }
+}
