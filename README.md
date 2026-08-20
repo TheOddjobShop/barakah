@@ -220,8 +220,16 @@ The interesting seams are [`Scheduler.swift`](Sources/Barakah/Services/Scheduler
 
 Barakah asks for **Location** (to calculate times), **Notifications** (for iqama
 reminders), and **Automation** (to pause Spotify, Music, VLC and QuickTime).
-Everything is computed locally. Nothing is sent anywhere — there is no network
-code in the app at all.
+
+Prayer times are computed entirely on your Mac — the calculation is astronomy,
+not a lookup, so it needs no server and works offline. Barakah opens no network
+connections of its own and has no analytics, no accounts, and no telemetry.
+
+The one exception worth naming plainly: turning coordinates into a place name
+uses Apple's `CLGeocoder`, which is a network call to Apple. That happens when
+you search for a city by name, and once after a location fix to label it
+"Sunnyvale, CA" rather than a pair of numbers. Prayer times themselves never
+depend on it — if it fails, you get the coordinates and correct times anyway.
 
 macOS ties Automation grants to a binary's code signature, so every rebuild of a
 locally-signed build silently invalidates them while System Settings keeps

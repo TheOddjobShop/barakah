@@ -32,6 +32,14 @@ public final class AudioService: NSObject {
     /// Called when playback ends on its own or is stopped.
     public var onFinish: ((PrayerKind) -> Void)?
 
+    /// Posted whenever playback starts or stops, so the menu bar can switch
+    /// itself into a stop button on the instant rather than on its next tick.
+    public static let playbackChanged = Notification.Name("dev.justin06lee.barakah.playbackChanged")
+
+    private func announce() {
+        NotificationCenter.default.post(name: Self.playbackChanged, object: nil)
+    }
+
     private var player: AVAudioPlayer?
     private var ticker: Timer?
     private var fadeTask: Task<Void, Never>?
@@ -63,6 +71,7 @@ public final class AudioService: NSObject {
             elapsed = 0
             lastError = nil
             startTicker()
+            announce()
 
             if settings.athanMaxSeconds > 0 {
                 let limit = Double(settings.athanMaxSeconds)
@@ -101,6 +110,7 @@ public final class AudioService: NSObject {
         duration = player?.duration ?? 0
         elapsed = 0
         startTicker()
+        announce()
     }
 
     /// Stop playback, fading out briefly so it does not cut off harshly.
@@ -125,6 +135,7 @@ public final class AudioService: NSObject {
             player = nil
         }
 
+        announce()
         if notify, let finished { onFinish?(finished) }
     }
 

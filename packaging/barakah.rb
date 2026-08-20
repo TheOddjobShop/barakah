@@ -29,7 +29,8 @@ cask "barakah" do
       Notifications  for iqama reminders
       Automation     to pause Spotify, Music, VLC and QuickTime
 
-    Everything is computed on your Mac. The app contains no network code.
+    Prayer times are computed on your Mac and work offline. The only network
+    call is Apple's geocoder, used to turn coordinates into a place name.
 
     It ships no adhan recording, because every recording of the adhan is
     copyrighted even though the words are not. The default sound is a

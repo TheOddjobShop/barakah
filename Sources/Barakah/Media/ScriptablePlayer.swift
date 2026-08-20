@@ -40,20 +40,25 @@ struct ScriptablePlayer: Sendable, Hashable {
         playScript: #"tell application id "com.apple.TV" to play"#
     )
 
-    static let podcasts = ScriptablePlayer(
-        bundleIdentifier: "com.apple.podcasts",
-        applicationName: "Podcasts",
-        stateScript: #"tell application id "com.apple.podcasts" to return player state as text"#,
-        pauseScript: #"tell application id "com.apple.podcasts" to pause"#,
-        playScript: #"tell application id "com.apple.podcasts" to play"#
-    )
-
     /// VLC exposes a boolean `playing` and a `play` command that *toggles*, so
     /// both scripts are guarded by the current state to stay idempotent.
+    ///
+    /// The state script has to be a full `tell` block rather than the compact
+    /// `tell … to if …` form the other two use: AppleScript's one-line `if`
+    /// accepts no `else` clause, and silently fails to compile with one
+    /// (`-2740`), which would leave VLC permanently undetected.
     static let vlc = ScriptablePlayer(
         bundleIdentifier: "org.videolan.vlc",
         applicationName: "VLC",
-        stateScript: #"tell application id "org.videolan.vlc" to if playing then return "playing" else return "paused""#,
+        stateScript: #"""
+        tell application id "org.videolan.vlc"
+            if playing then
+                return "playing"
+            else
+                return "paused"
+            end if
+        end tell
+        """#,
         pauseScript: #"tell application id "org.videolan.vlc" to if playing then play"#,
         playScript: #"tell application id "org.videolan.vlc" to if not playing then play"#
     )
@@ -86,7 +91,11 @@ struct ScriptablePlayer: Sendable, Hashable {
         """#
     )
 
-    static let all: [ScriptablePlayer] = [.spotify, .music, .tv, .podcasts, .vlc, .quickTime]
+    /// Podcasts.app is deliberately absent: it ships no scripting dictionary at
+    /// all, so every term addressed to it fails to compile (-2740). It is still
+    /// covered, via Now Playing, which is the layer that reaches apps Apple never
+    /// made scriptable.
+    static let all: [ScriptablePlayer] = [.spotify, .music, .tv, .vlc, .quickTime]
 }
 
 /// Runs the scripts above, never launching an app that is not already open.
@@ -145,6 +154,19 @@ actor ScriptablePlayerController {
             .isEmpty
     }
 
+    /// Pull the OSA error number out of the error dictionary.
+    ///
+    /// Handled defensively because the value arrives as an `NSNumber` on some
+    /// paths and a string on others, and a failed parse would silently disable
+    /// the "automation was denied" handling — leaving Barakah re-prompting on
+    /// every prayer instead of backing off once.
+    static func errorNumber(from error: NSDictionary) -> Int {
+        let raw = error[NSAppleScript.errorNumber]
+        if let number = raw as? NSNumber { return number.intValue }
+        if let text = raw as? String, let value = Int(text) { return value }
+        return 0
+    }
+
     /// Returns the script's string result, or nil if it failed for any reason.
     private func run(_ source: String, for player: ScriptablePlayer) -> String? {
         guard let script = NSAppleScript(source: source) else { return nil }
@@ -152,7 +174,7 @@ actor ScriptablePlayerController {
         let result = script.executeAndReturnError(&error)
 
         if let error {
-            let code = error[NSAppleScript.errorNumber] as? Int ?? 0
+            let code = Self.errorNumber(from: error)
             switch code {
             case Self.notAuthorizedCode:
                 deniedBundleIDs.insert(player.bundleIdentifier)

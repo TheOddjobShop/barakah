@@ -16,6 +16,7 @@ final class MenuBarController: NSObject {
     private let popover = NSPopover()
     private var refreshTimer: Timer?
     private var athanWindow: AthanWindowController?
+    private var playbackObserver: Any?
 
     var onOpenSettings: (() -> Void)?
 
@@ -27,6 +28,15 @@ final class MenuBarController: NSObject {
         configurePopover()
         configureButton()
         startRefreshing()
+
+        // The five-second tick is fine for a countdown, but far too slow for
+        // the athan starting — the icon must become a stop button at once.
+        playbackObserver = NotificationCenter.default.addObserver(
+            forName: AudioService.playbackChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+
         refresh()
     }
 
@@ -238,6 +248,10 @@ final class MenuBarController: NSObject {
     }
 
     func invalidate() {
+        if let playbackObserver {
+            NotificationCenter.default.removeObserver(playbackObserver)
+            self.playbackObserver = nil
+        }
         refreshTimer?.invalidate()
         refreshTimer = nil
         athanWindow?.close()
