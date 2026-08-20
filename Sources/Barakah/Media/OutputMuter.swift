@@ -15,7 +15,13 @@ import OSLog
 final class OutputMuter: @unchecked Sendable {
     static let shared = OutputMuter()
 
-    private struct PreviousState {
+    /// What the output device looked like before Barakah touched it.
+    ///
+    /// Persisted, because the worst failure this class can produce is leaving
+    /// somebody's Mac silent. A crash or force-quit mid-athan skips
+    /// `applicationWillTerminate`, and with the volume fallback the original
+    /// level would die with the process and be unrecoverable.
+    private struct PreviousState: Codable {
         var deviceID: AudioDeviceID
         var wasMuted: Bool?
         var previousVolume: Float32?
@@ -26,6 +32,37 @@ final class OutputMuter: @unchecked Sendable {
     private let log = Logger(subsystem: Barakah.subsystem, category: "output")
 
     private init() {}
+
+    /// Where the "we muted the output" marker lives between launches.
+    private static var markerURL: URL {
+        let base = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let directory = base.appendingPathComponent("Barakah", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("output-mute-state.json")
+    }
+
+    /// Undo a mute left behind by a previous run that died before restoring.
+    /// Called once at launch.
+    func recoverIfNeeded() {
+        guard let data = try? Data(contentsOf: Self.markerURL),
+              let state = try? JSONDecoder().decode(PreviousState.self, from: data) else { return }
+        try? FileManager.default.removeItem(at: Self.markerURL)
+
+        log.notice("restoring output muted by a previous run")
+        if let wasMuted = state.wasMuted { _ = Self.writeMute(state.deviceID, muted: wasMuted) }
+        if let volume = state.previousVolume { _ = Self.writeVolume(state.deviceID, volume: volume) }
+    }
+
+    private func persist(_ state: PreviousState?) {
+        guard let state else {
+            try? FileManager.default.removeItem(at: Self.markerURL)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        try? data.write(to: Self.markerURL, options: .atomic)
+    }
 
     var isMuted: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -42,7 +79,9 @@ final class OutputMuter: @unchecked Sendable {
         // Preferred path: the device has a real mute control.
         if let wasMuted = Self.readMute(device) {
             guard Self.writeMute(device, muted: true) else { return false }
-            previous = PreviousState(deviceID: device, wasMuted: wasMuted, previousVolume: nil)
+            let state = PreviousState(deviceID: device, wasMuted: wasMuted, previousVolume: nil)
+            previous = state
+            persist(state)
             log.debug("muted output device \(device)")
             return true
         }
@@ -50,7 +89,9 @@ final class OutputMuter: @unchecked Sendable {
         // Fallback: drop the virtual main volume to zero and remember it.
         if let volume = Self.readVolume(device) {
             guard Self.writeVolume(device, volume: 0) else { return false }
-            previous = PreviousState(deviceID: device, wasMuted: nil, previousVolume: volume)
+            let state = PreviousState(deviceID: device, wasMuted: nil, previousVolume: volume)
+            previous = state
+            persist(state)
             log.debug("zeroed volume on output device \(device)")
             return true
         }
@@ -65,11 +106,22 @@ final class OutputMuter: @unchecked Sendable {
         guard let state = previous else { return }
         previous = nil
 
+        var restored = true
         if let wasMuted = state.wasMuted {
-            _ = Self.writeMute(state.deviceID, muted: wasMuted)
+            restored = Self.writeMute(state.deviceID, muted: wasMuted) && restored
         }
         if let volume = state.previousVolume {
-            _ = Self.writeVolume(state.deviceID, volume: volume)
+            restored = Self.writeVolume(state.deviceID, volume: volume) && restored
+        }
+
+        // A device that vanished mid-athan — AirPods pulled out — cannot be
+        // written to now, and CoreAudio remembers per-device mute. Keeping the
+        // marker means the next launch tries again rather than leaving those
+        // headphones silent forever.
+        if restored {
+            persist(nil)
+        } else {
+            log.notice("could not restore device \(state.deviceID); will retry next launch")
         }
         log.debug("restored output device \(state.deviceID)")
     }

@@ -75,12 +75,36 @@ public struct PrayerEvent: Identifiable, Hashable, Sendable {
     public let kind: Kind
     public let fireAt: Date
 
-    public var id: String {
-        switch kind {
-        case .athan: "\(prayer.rawValue)-athan-\(fireAt.timeIntervalSince1970)"
-        case .iqamaReminder(let m): "\(prayer.rawValue)-reminder\(m)-\(fireAt.timeIntervalSince1970)"
-        case .iqama: "\(prayer.rawValue)-iqama-\(fireAt.timeIntervalSince1970)"
+    public var id: String { key(in: .gregorianUTCForKeys) }
+
+    /// A key that identifies "this prayer's athan, today" — deliberately *not*
+    /// keyed on the exact firing instant.
+    ///
+    /// Recomputing the schedule can move a prayer by a second or two: a new
+    /// CoreLocation fix a kilometre away, a nudged fine-adjustment, a
+    /// recalculated day. Keying on the timestamp minted a fresh identity every
+    /// time that happened, so an event that had *just* fired looked unfired and
+    /// sounded a second adhan. Keying on the calendar day makes it idempotent.
+    ///
+    /// The minutes-before value is left out of the reminder key on purpose: one
+    /// reminder per prayer per day, whatever the setting was when it fired.
+    public func key(in calendar: Calendar) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: fireAt)
+        let day = String(
+            format: "%04d-%02d-%02d",
+            parts.year ?? 0, parts.month ?? 0, parts.day ?? 0
+        )
+        let tag = switch kind {
+        case .athan: "athan"
+        case .iqamaReminder: "reminder"
+        case .iqama: "iqama"
         }
+        return "\(prayer.rawValue)-\(tag)-\(day)"
+    }
+
+    /// The calendar day this event belongs to, for pruning old keys.
+    public func day(in calendar: Calendar) -> Date {
+        calendar.startOfDay(for: fireAt)
     }
 
     public init(prayer: PrayerKind, kind: Kind, fireAt: Date) {
@@ -88,4 +112,15 @@ public struct PrayerEvent: Identifiable, Hashable, Sendable {
         self.kind = kind
         self.fireAt = fireAt
     }
+}
+
+
+extension Calendar {
+    /// Used only where a key needs *some* stable calendar and the caller has no
+    /// place-specific one to hand.
+    static let gregorianUTCForKeys: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        return calendar
+    }()
 }

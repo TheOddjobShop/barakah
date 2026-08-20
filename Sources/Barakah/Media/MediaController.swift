@@ -60,6 +60,10 @@ public final class MediaController {
     private let bridge = MediaRemoteBridge.shared
     private let scripts = ScriptablePlayerController.shared
     private let muter = OutputMuter.shared
+    /// Serialises interruptions. Two overlapping calls both used to observe
+    /// `active == nil`, and the loser's paused players were never resumed —
+    /// and if the loser had done the muting, output stayed muted through quit.
+    private var inFlight: Task<MediaInterruption, Never>?
     private let log = Logger(subsystem: Barakah.subsystem, category: "media")
 
     public init() {}
@@ -75,6 +79,17 @@ public final class MediaController {
     @discardableResult
     public func interrupt(mode: MediaPauseMode, settings: SettingsData) async -> MediaInterruption {
         guard mode.pausesPlayers || mode.mutesOutput else { return MediaInterruption() }
+        let previous = inFlight
+        let task = Task { @MainActor [weak self] () -> MediaInterruption in
+            _ = await previous?.value
+            guard let self else { return MediaInterruption() }
+            return await self.performInterrupt(mode: mode, settings: settings)
+        }
+        inFlight = task
+        return await task.value
+    }
+
+    private func performInterrupt(mode: MediaPauseMode, settings: SettingsData) async -> MediaInterruption {
 
         // Anything still paused from a previous athan is released first, so the
         // record of "what to resume" never straddles two prayers.
@@ -88,11 +103,11 @@ public final class MediaController {
         // now-playing API refuses to answer unentitled apps on current macOS,
         // and the per-process flag is sticky for a second or two after a pause,
         // so it has to be read before anything is touched.
-        let playing = AudioActivity.outputtingApplications()
-            .filter { source in
-                guard let bundleID = source.bundleIdentifier else { return true }
-                return !excluded.contains(bundleID)
-            }
+        let allPlaying = AudioActivity.outputtingApplications()
+        let playing = allPlaying.filter { source in
+            guard let bundleID = source.bundleIdentifier else { return true }
+            return !excluded.contains(bundleID)
+        }
         interruption.sourcesAtInterruption = playing.map(\.displayName)
 
         // Layer 1 — ask scriptable players directly. Done first because it is the
@@ -129,7 +144,27 @@ public final class MediaController {
             let handledByScript = nowPlaying?.bundleIdentifier
                 .map(interruption.pausedPlayers.contains) ?? false
 
-            if !ownerExcluded && !handledByScript {
+            // Whether to fire the blind pause at all.
+            //
+            // The now-playing owner's bundle id is usually unavailable on
+            // current macOS, so gating on that alone silently ignored the user's
+            // exclusion list — someone who excluded Spotify still had Spotify
+            // paused every prayer. The CoreAudio snapshot is the reliable
+            // source, so the decision is made from that instead:
+            //   - something unexcluded is playing  -> pause it
+            //   - only excluded things are playing -> leave them alone
+            //   - nothing detected, and detection works -> nothing to pause
+            //   - detection unavailable             -> pause as a best effort
+            let shouldPause: Bool
+            if !unhandled.isEmpty {
+                shouldPause = true
+            } else if !allPlaying.isEmpty {
+                shouldPause = false          // everything playing was excluded or scripted
+            } else {
+                shouldPause = !AudioActivity.isSupported
+            }
+
+            if !ownerExcluded && !handledByScript && shouldPause {
                 // Deliberately an explicit pause and never a toggle: if nothing is
                 // playing this is a no-op, whereas a toggle would start music in
                 // the middle of the adhan.
@@ -172,12 +207,14 @@ public final class MediaController {
             await scripts.play(player)
         }
 
-        // Resume only with positive evidence that this pause stopped something.
-        // Either the now-playing API named what was playing, or output audio was
-        // observed going silent when we paused. Absent both, staying quiet is the
-        // only safe choice — a blind `play` would start audio nobody asked for.
-        if interruption.sentMediaRemotePause,
-           interruption.mediaRemoteStoppedAudio || interruption.nowPlayingDescription != nil {
+        // `mediaRemoteStoppedAudio` is the *only* acceptable evidence here.
+        //
+        // A now-playing description is not evidence: MediaRemote reports the
+        // loaded track of whichever app holds Now Playing regardless of whether
+        // it is playing, so a paused YouTube tab in a background browser
+        // produces a perfectly good description. Accepting that as proof meant
+        // that pausing Spotify at Maghrib also *started* the paused video.
+        if interruption.sentMediaRemotePause, interruption.mediaRemoteStoppedAudio {
             bridge.send(.play)
         }
 

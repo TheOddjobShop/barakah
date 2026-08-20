@@ -19,18 +19,33 @@ public final class AppState {
     public let notifications: NotificationService
     public let location: LocationService
 
-    /// Prayers whose athan the user has silenced for today only.
-    public private(set) var mutedToday: Set<PrayerKind> = []
+    /// Prayers the user has silenced, each mapped to the day it was silenced
+    /// for.
+    ///
+    /// Stored as a day rather than a bare set so that reading it is a pure
+    /// comparison. The old set-plus-prune arrangement meant the popover could
+    /// show a stale mute from yesterday, and clicking "unmute" would prune
+    /// first, find nothing, and *mute* today's prayer instead.
+    public private(set) var mutedDays: [PrayerKind: Date] = [:]
     /// Set when every athan is suppressed until this date.
     public private(set) var mutedUntil: Date?
     /// Description of the media Barakah paused, shown in the athan window.
     public private(set) var interruptionSummary: String?
 
     private var resumeTask: Task<Void, Never>?
-    private var mutedTodayDay: Date?
+    private var notificationTask: Task<Void, Never>?
+    private var dayObserver: Any?
     private let log = Logger(subsystem: Barakah.subsystem, category: "app")
 
     public var settings: SettingsData { settingsStore.data }
+
+    /// Start of today in the *place's* timezone, which is the day prayers are
+    /// measured in — the system's day drifts from it when tracking another city.
+    private var startOfPlaceDay: Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = settings.activePlace.timeZone
+        return calendar.startOfDay(for: Date())
+    }
 
     public init(settingsStore: SettingsStore? = nil) {
         // Constructed here rather than as a default argument: default argument
@@ -51,13 +66,26 @@ public final class AppState {
 
     /// Called once from the app delegate after the UI exists.
     public func start() async {
+        // A previous run may have died mid-athan with the output muted.
+        OutputMuter.shared.recoverIfNeeded()
+
+        // The notification horizon is only three days long, so something has to
+        // roll it forward or reminders silently stop on a machine that simply
+        // stays logged in — which is the normal case for a login item.
+        scheduler.onRebuild = { [weak self] in self?.refreshNotifications() }
+        dayObserver = NotificationCenter.default.addObserver(
+            forName: .NSCalendarDayChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshNotifications(force: true) }
+        }
+
         await notifications.refreshAuthorization()
         if location.needsPermission, settings.locationMode == .automatic {
             location.requestPermission()
         } else if settings.locationMode == .automatic {
             location.refresh()
         }
-        await notifications.reschedule(settings: settings, engine: PrayerTimeEngine())
+        refreshNotifications(force: true)
         scheduler.rebuild()
     }
 
@@ -76,10 +104,48 @@ public final class AppState {
 
     private func propagateSettingsChange() {
         scheduler.update(settings: settings)
-        let snapshot = settings
-        Task { await notifications.reschedule(settings: snapshot, engine: PrayerTimeEngine()) }
+        refreshNotifications(force: true)
         if settings.locationMode == .automatic, location.isAuthorized {
             location.refresh()
+        }
+    }
+
+    /// When the pending notifications were last rewritten.
+    private var lastNotificationRefresh: Date?
+
+    /// Rewrite the pending notifications.
+    ///
+    /// Rebuilds happen often — every wake, clock change and settings edit — and
+    /// rewriting forty-odd notifications each time is pointless, so unforced
+    /// calls are throttled. Forced calls come from the things that genuinely
+    /// change what should be pending: a settings edit, a day rollover, or the
+    /// user silencing a prayer.
+    public func refreshNotifications(force: Bool = false) {
+        if !force, let last = lastNotificationRefresh,
+           Date().timeIntervalSince(last) < 6 * 3600 { return }
+        lastNotificationRefresh = Date()
+
+        let snapshot = settings
+        let mutedSnapshot = mutedDays
+        let mutedUntilSnapshot = mutedUntil
+        let placeDay = startOfPlaceDay
+
+        // Only one reschedule may be in flight: each begins by removing every
+        // pending request, so two interleaving could leave the older run's
+        // remaining adds behind, alerting at the previous times.
+        notificationTask?.cancel()
+        notificationTask = Task { [weak self] in
+            guard let self else { return }
+            await self.notifications.reschedule(
+                settings: snapshot,
+                engine: PrayerTimeEngine()
+            ) { prayer, fireAt in
+                // Silencing must reach the notifications too. Otherwise
+                // "silence athans for an hour" still popped a time-sensitive
+                // banner during the meeting it was silenced for.
+                if let until = mutedUntilSnapshot, fireAt <= until { return true }
+                return mutedSnapshot[prayer] == placeDay
+            }
         }
     }
 
@@ -128,7 +194,10 @@ public final class AppState {
             interruptionSummary = nil
         }
 
-        if config.athanEnabled {
+        // An athan that is "enabled" but set to Silent makes no more sound than
+        // a disabled one, and must be treated the same way — otherwise media
+        // pauses and resumes within the same runloop tick.
+        if config.athanEnabled, !settings.sound(for: prayer).isSilent {
             audio.play(prayer: prayer, settings: settings)
         } else {
             // Media was paused but no athan will play, so "resume when the athan
@@ -171,9 +240,11 @@ public final class AppState {
             scheduleResume(after: TimeInterval(minutes * 60) + silentAthanLength)
 
         case .afterIqama:
+            // With no iqama rule there is nothing to wait for, so fall back to
+            // the silent-athan length rather than resuming instantly.
             let iqama = scheduler.today?.prayer(prayer)?.iqama
-            let delay = iqama.map { max(0, $0.timeIntervalSinceNow) } ?? 0
-            scheduleResume(after: delay)
+            let delay = iqama.map { max(0, $0.timeIntervalSinceNow) } ?? silentAthanLength
+            scheduleResume(after: max(delay, silentAthanLength))
         }
     }
 
@@ -196,21 +267,25 @@ public final class AppState {
 
     // MARK: - Muting
 
+    /// Whether this prayer's athan is silenced for today.
+    public func isMutedToday(_ prayer: PrayerKind) -> Bool {
+        mutedDays[prayer] == startOfPlaceDay
+    }
+
     public func toggleMuteToday(_ prayer: PrayerKind) {
-        pruneMutedToday()
-        if mutedToday.contains(prayer) {
-            mutedToday.remove(prayer)
+        if isMutedToday(prayer) {
+            mutedDays[prayer] = nil
         } else {
-            mutedToday.insert(prayer)
-            mutedTodayDay = Calendar.current.startOfDay(for: Date())
+            mutedDays[prayer] = startOfPlaceDay
         }
+        refreshNotifications(force: true)
     }
 
     /// Silence every athan for a while — for a meeting, a flight, a cinema.
     public func mute(for duration: TimeInterval?) {
         mutedUntil = duration.map { Date().addingTimeInterval($0) }
-        if duration == nil { mutedUntil = nil }
         if audio.isPlaying { audio.stop() }
+        refreshNotifications(force: true)
     }
 
     public var isGloballyMuted: Bool {
@@ -219,17 +294,7 @@ public final class AppState {
     }
 
     public func isSuppressed(_ prayer: PrayerKind) -> Bool {
-        pruneMutedToday()
-        return isGloballyMuted || mutedToday.contains(prayer)
-    }
-
-    /// "Mute today" means today — clear it once the day has turned over.
-    private func pruneMutedToday() {
-        let startOfToday = Calendar.current.startOfDay(for: Date())
-        if let day = mutedTodayDay, day != startOfToday {
-            mutedToday.removeAll()
-            mutedTodayDay = nil
-        }
+        isGloballyMuted || isMutedToday(prayer)
     }
 
     // MARK: - Derived display state

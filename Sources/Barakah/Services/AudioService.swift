@@ -51,11 +51,13 @@ public final class AudioService: NSObject {
     /// Start the athan for `prayer`. Any playback already running is replaced.
     public func play(prayer: PrayerKind, settings: SettingsData) {
         let sound = settings.sound(for: prayer)
+        // Stop first even when the new sound is silent, or a running athan would
+        // keep playing underneath a prayer that asked for silence.
+        stop(notify: false)
         guard !sound.isSilent else {
             onFinish?(prayer)
             return
         }
-        stop(notify: false)
 
         do {
             let url = try resolve(sound)
@@ -86,7 +88,8 @@ public final class AudioService: NSObject {
             // Falling back to the built-in chime means a missing or moved custom
             // file still results in an audible athan rather than silence.
             log.error("athan playback failed: \(error.localizedDescription)")
-            lastError = Self.describe(error, sound: sound)
+            let message = Self.describe(error, sound: sound)
+            lastError = message
             if case .chime = sound {
                 onFinish?(prayer)
             } else {
@@ -94,6 +97,10 @@ public final class AudioService: NSObject {
                 fallback.athanSound = .chime
                 fallback.fajrAthanSound = nil
                 play(prayer: prayer, settings: fallback)
+                // The successful chime clears `lastError` on its way through, so
+                // put the real reason back. Otherwise a user whose custom athan
+                // has moved hears a chime forever and is never told why.
+                lastError = message
             }
         }
     }

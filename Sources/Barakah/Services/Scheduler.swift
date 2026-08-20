@@ -41,18 +41,38 @@ public final class Scheduler {
     /// Independent safety net in case the precise timer never fires.
     private static let heartbeat: TimeInterval = 30
 
+    /// Notified after every rebuild, so dependents that cache derived state —
+    /// notably the pre-scheduled notifications — can roll their own horizon
+    /// forward instead of silently expiring.
+    public var onRebuild: (() -> Void)?
+
     private let engine = PrayerTimeEngine()
     private var settings: SettingsData
     private var timer: Timer?
     private var heartbeatTimer: Timer?
-    private var firedEventIDs: Set<String> = []
+    /// Keys of events already handled, day-stable so a recomputation that moves
+    /// a prayer by a second cannot resurrect it. Value is the day it belongs to,
+    /// which is what bounds the set.
+    private var firedKeys: [String: Date] = [:]
+    /// Events that fired before this moment belong to a previous run of the app
+    /// and must never be replayed on launch.
+    private let startedAt: Date
     private var observers: [Any] = []
     private let log = Logger(subsystem: Barakah.subsystem, category: "scheduler")
 
-    public init(settings: SettingsData) {
+    public init(settings: SettingsData, now: Date = Date()) {
         self.settings = settings
+        self.startedAt = now
         installObservers()
-        rebuild()
+        rebuild(now: now)
+    }
+
+    /// The calendar prayer days are measured in — the *place's*, not the
+    /// machine's, so tracking a city in another timezone rolls over correctly.
+    private var placeCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = settings.activePlace.timeZone
+        return calendar
     }
 
     /// Tear down the timers. Called at app termination; a deinit cannot do this
@@ -72,8 +92,7 @@ public final class Scheduler {
 
     /// Recompute schedules, prune stale state, and arm the next timer.
     public func rebuild(now: Date = Date()) {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = settings.activePlace.timeZone
+        let calendar = placeCalendar
 
         today = engine.schedule(for: now, settings: settings)
         tomorrow = calendar.date(byAdding: .day, value: 1, to: now)
@@ -86,33 +105,55 @@ public final class Scheduler {
                                  horizon: Self.horizon,
                                  settings: settings)
 
-        // Forget fired markers for events now well in the past, so the set cannot
-        // grow without bound over a long-running session.
-        let cutoff = now.addingTimeInterval(-3600)
-        let liveIDs = Set(upcoming.filter { $0.fireAt > cutoff }.map(\.id))
-        firedEventIDs.formIntersection(liveIDs)
+        // Fired markers are kept for two days and pruned by *day*, not by
+        // whether the event is still in `upcoming`. Pruning by presence meant a
+        // marker vanished 90 seconds after firing, so a backwards clock step
+        // could re-admit the event and sound the adhan again.
+        if let horizon = calendar.date(byAdding: .day, value: -2, to: calendar.startOfDay(for: now)) {
+            firedKeys = firedKeys.filter { $0.value >= horizon }
+        }
 
         arm(now: now)
+        onRebuild?()
     }
 
     /// Fire anything that has come due, then re-arm.
     private func checkDue(now: Date = Date()) {
+        let calendar = placeCalendar
         var didFire = false
-        for event in upcoming where !firedEventIDs.contains(event.id) {
+
+        for event in upcoming {
+            let key = event.key(in: calendar)
+            guard firedKeys[key] == nil else { continue }
             guard event.fireAt <= now else { break }
-            firedEventIDs.insert(event.id)
+            firedKeys[key] = event.day(in: calendar)
+
+            // Anything from before this process started belongs to a previous
+            // run. Replaying it would sound an adhan for a prayer the user has
+            // already been at.
+            guard event.fireAt >= startedAt else {
+                log.notice("skipping \(key, privacy: .public), predates launch")
+                continue
+            }
 
             let lateness = now.timeIntervalSince(event.fireAt)
             guard lateness <= Self.grace else {
-                log.notice("skipping \(event.id, privacy: .public), \(Int(lateness))s late")
+                log.notice("skipping \(key, privacy: .public), \(Int(lateness))s late")
                 continue
             }
-            log.info("firing \(event.id, privacy: .public)")
+            log.info("firing \(key, privacy: .public)")
             onEvent?(event)
             didFire = true
         }
 
-        if didFire {
+        // The day model and `nextPrayer` are only refreshed by a rebuild. Without
+        // these two checks a schedule with no armed events — display-only
+        // prayers, or an adhan configured for Maghrib alone — would leave the
+        // menu bar reading "Asr in 0s" for hours.
+        let dayRolled = today.map { calendar.startOfDay(for: now) != $0.day } ?? true
+        let nextPassed = nextPrayer.map { $0.athan <= now } ?? true
+
+        if didFire || dayRolled || nextPassed {
             rebuild(now: now)
         } else {
             arm(now: now)
@@ -123,7 +164,20 @@ public final class Scheduler {
         timer?.invalidate()
         timer = nil
 
-        guard let next = upcoming.first(where: { !firedEventIDs.contains($0.id) && $0.fireAt > now }) else {
+        let calendar = placeCalendar
+        let pending = upcoming.filter { firedKeys[$0.key(in: calendar)] == nil }
+
+        // Something already due fires on the next runloop pass rather than
+        // waiting up to 37 seconds for the heartbeat. That wait used to push
+        // borderline-late events past the grace window, so whether a prayer
+        // sounded depended on heartbeat phase.
+        if pending.contains(where: { $0.fireAt <= now }) {
+            scheduleImmediateCheck()
+            startHeartbeatIfNeeded()
+            return
+        }
+
+        guard let next = pending.first(where: { $0.fireAt > now }) else {
             // Nothing pending — the heartbeat will pick up a day rollover.
             startHeartbeatIfNeeded()
             return
@@ -142,6 +196,16 @@ public final class Scheduler {
 
         startHeartbeatIfNeeded()
         log.debug("armed for \(fireDate, privacy: .public)")
+    }
+
+    /// Run `checkDue` on the next runloop pass. Terminates because `checkDue`
+    /// marks each event fired before acting on it.
+    private func scheduleImmediateCheck() {
+        let soon = Timer(timeInterval: 0.05, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkDue() }
+        }
+        RunLoop.main.add(soon, forMode: .common)
+        timer = soon
     }
 
     private func startHeartbeatIfNeeded() {

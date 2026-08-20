@@ -48,9 +48,20 @@ public final class NotificationService {
 
     /// Replace all pending notifications with those implied by current settings.
     ///
-    /// Called on launch, on any settings change, on location change, and once a
-    /// day so the horizon keeps rolling forward.
-    public func reschedule(settings: SettingsData, engine: PrayerTimeEngine, now: Date = Date()) async {
+    /// Called on launch, on any settings change, on location change, when the
+    /// user silences or unsilences a prayer, and once a day so the horizon keeps
+    /// rolling forward — see `AppState.refreshNotifications`.
+    ///
+    /// `isSuppressed` lets "silence athans for an hour" and "mute this prayer
+    /// today" actually reach the notifications. Without it, silencing stopped
+    /// the adhan but still popped a time-sensitive banner — with a sound, if the
+    /// user had enabled that — during the meeting they silenced it for.
+    public func reschedule(
+        settings: SettingsData,
+        engine: PrayerTimeEngine,
+        now: Date = Date(),
+        isSuppressed: (PrayerKind, Date) -> Bool = { _, _ in false }
+    ) async {
         center.removeAllPendingNotificationRequests()
         guard isAuthorized else { return }
 
@@ -65,13 +76,16 @@ public final class NotificationService {
 
         var scheduled = 0
         for event in events where scheduled < Self.pendingLimit {
+            guard !isSuppressed(event.prayer, event.fireAt) else { continue }
             guard let content = content(for: event, settings: settings, formatter: formatter) else { continue }
 
-            let components = calendar.dateComponents(
-                [.year, .month, .day, .hour, .minute, .second], from: event.fireAt
-            )
+            let components = Self.triggerComponents(for: event.fireAt, in: calendar)
+
             let request = UNNotificationRequest(
-                identifier: event.id,
+                // Keyed by prayer and day rather than by firing instant, so a
+                // reschedule replaces the old request instead of racing it and
+                // leaving a duplicate at the previous time.
+                identifier: event.key(in: calendar),
                 content: content,
                 trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
             )
@@ -79,10 +93,28 @@ public final class NotificationService {
                 try await center.add(request)
                 scheduled += 1
             } catch {
-                log.error("failed to schedule \(event.id, privacy: .public): \(error.localizedDescription)")
+                log.error("failed to schedule \(event.key(in: calendar), privacy: .public): \(error.localizedDescription)")
             }
         }
         log.info("scheduled \(scheduled) notifications over \(Self.horizonDays) days")
+    }
+
+    /// Date components for a calendar trigger, anchored to `calendar`'s zone.
+    ///
+    /// Extracted so the anchoring can be tested, because getting it wrong is
+    /// silent and severe. `dateComponents(_:from:)` populates `timeZone` only
+    /// when it is in the requested set, so bare components carry wall-clock
+    /// numbers with no zone, and `UNCalendarNotificationTrigger` resolves them
+    /// against the *user's* calendar. Anyone tracking a city in another
+    /// timezone — the whole point of pinning a location — had every reminder
+    /// shifted by the offset between the two. Measured at nine hours for a Mac
+    /// in Los Angeles tracking Riyadh.
+    nonisolated static func triggerComponents(for date: Date, in calendar: Calendar) -> DateComponents {
+        var components = calendar.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second], from: date
+        )
+        components.timeZone = calendar.timeZone
+        return components
     }
 
     public func cancelAll() {

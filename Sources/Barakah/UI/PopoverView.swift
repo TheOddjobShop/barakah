@@ -161,7 +161,7 @@ struct PopoverView: View {
                         prayer: prayer,
                         formatter: formatter,
                         state: state(for: prayer, in: today),
-                        isMuted: app.mutedToday.contains(prayer.kind),
+                        isMuted: app.isMutedToday(prayer.kind),
                         onToggleMute: { app.toggleMuteToday(prayer.kind) }
                     )
                 }
