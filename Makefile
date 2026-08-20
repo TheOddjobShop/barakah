@@ -36,7 +36,7 @@ endif
 
 .DEFAULT_GOAL := all
 .PHONY: all build build-universal assemble bundle icon install update run stop \
-        test clean reset-permissions adhan sign notarize dmg check cask
+        test clean reset-permissions sign notarize dmg check cask
 
 ## The whole golden path.
 all: stop reset-permissions bundle install run
@@ -145,10 +145,6 @@ test:
 check:
 	@swift build -c release --disable-sandbox
 	@swift test
-
-## Fetch a freely-licensed adhan recording.
-adhan:
-	@./scripts/fetch-adhan.sh
 
 ## Package a distributable disk image.
 dmg: build-universal

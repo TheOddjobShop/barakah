@@ -24,11 +24,31 @@ It is a menu bar app: no Dock icon, no window unless you open one.
 
 ## Install
 
+Requires macOS 14 (Sonoma) or later.
+
+**Download the app** — [latest release](https://github.com/justin06lee/barakah/releases/latest).
+Open the `.dmg` and drag Barakah into Applications.
+
+The first launch needs one extra step, because Barakah is not signed with a paid
+Apple Developer certificate. macOS will say it *"could not verify Barakah is free
+of malware"* and refuse to open it. To let it through:
+
+1. Click **Done** on the warning.
+2. Open **System Settings → Privacy & Security**.
+3. Scroll down. There is a line saying *"Barakah was blocked to protect your Mac."*
+   Click **Open Anyway** next to it.
+4. Confirm with **Open Anyway**, and enter your password.
+
+That is a one-time step. Barakah opens normally from then on, and there is no
+Dock icon — look for the crescent in your menu bar.
+
+**With Homebrew:**
+
 ```sh
 brew install --cask justin06lee/tap/barakah
 ```
 
-Or build it yourself:
+**From source:**
 
 ```sh
 git clone https://github.com/justin06lee/barakah.git
@@ -37,7 +57,7 @@ make
 ```
 
 A bare `make` builds the app, clears any stale privacy grants left by a previous
-build, installs to `/Applications`, and launches it. Requires macOS 14 or later.
+build, installs it to `/Applications`, and launches it.
 
 ## The three things
 
@@ -142,18 +162,24 @@ under a blanket MIT or GPL code licence, with no audio licence and no
 attribution. One ships 47 of them. That is a habit, not a defence, and this
 project does not copy it.
 
-So there are two honest paths instead:
+So Barakah plays whatever *you* point it at instead. Either pick a file:
+
+**Settings → Athan → Choose a file…**
+
+or drop one into `~/Library/Application Support/Barakah/Athan/` and it appears
+in the sound list straight away, no restart. `.m4a`, `.mp3`, `.caf`, `.wav`,
+`.aiff` and `.ogg` all work.
+
+Most recordings are mastered too quiet — or too loud — to work as an alarm, so
+normalising on the way in makes the volume slider behave predictably:
 
 ```sh
-make adhan              # list what's available
-./scripts/fetch-adhan.sh adhan
+ffmpeg -i ~/Downloads/adhan.mp3 -af loudnorm=I=-16:TP=-1.5:LRA=11 \
+  -c:a aac -b:a 160k ~/Library/Application\ Support/Barakah/Athan/Adhan.m4a
 ```
 
-which downloads a genuinely CC0 field recording into
-`~/Library/Application Support/Barakah/Athan/` and normalises it to a usable
-level — nothing copyrighted ever enters this repository. Or point Barakah at a
-recording you already have rights to: **Settings → Athan → Choose a file…**.
-Either way it appears in the sound picker immediately.
+Whatever you put there stays on your machine. It is not part of this repository
+and rides along in no release.
 
 [`assets/NOTICE.md`](assets/NOTICE.md) documents this in full, including the two
 widely-reused Wikimedia files that are tagged CC0 but are measurably
@@ -196,7 +222,7 @@ make          # build, install, and run — the whole path
 make build    # compile only
 make test     # run the test suite
 make update   # stop, wipe stale grants, rebuild, reinstall, relaunch
-make dmg      # package a disk image
+make dmg      # package a universal disk image
 make clean
 ```
 

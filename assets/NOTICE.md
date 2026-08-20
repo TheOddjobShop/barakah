@@ -58,34 +58,25 @@ source:
 - Pixabay's licence forbids redistributing an unmodified file "on a standalone
   basis", which is precisely what bundling one in a repository would be.
 
-## Optional audio: `scripts/fetch-adhan.sh`
+## Using your own recording
 
-[`scripts/fetch-adhan.sh`](../scripts/fetch-adhan.sh) downloads a genuinely
-free recording into `~/Library/Application Support/Barakah/Athan/` on request.
-Nothing copyrighted enters this repository's history, and if a source's
-licensing is later challenged the fix is one URL rather than a history rewrite.
+Barakah plays any audio file you point it at. Two ways in:
 
-The recordings it offers:
+- **Settings → Athan → Choose a file…** — pick a file anywhere on disk.
+- Drop a file into `~/Library/Application Support/Barakah/Athan/` and it appears
+  in the sound list straight away, no restart needed. `.m4a`, `.mp3`, `.caf`,
+  `.wav`, `.aiff` and `.ogg` all work.
 
-```
-"Muslim calling to prayer", "Adhan" and "Iqamah" by Aishatu98
-Source:  https://commons.wikimedia.org/wiki/File:Muslim_calling_to_prayer.ogg
-         https://commons.wikimedia.org/wiki/File:Adhan.ogg
-         https://commons.wikimedia.org/wiki/File:Iqamah.ogg
-License: CC0 1.0 Universal (Public Domain Dedication)
-         https://creativecommons.org/publicdomain/zero/1.0/
+Most adhan recordings are mastered far too quiet — or far too loud — to work as
+an alarm. Normalising on the way in makes the volume slider behave predictably:
 
-Attribution is not required under CC0. It is given here as a courtesy.
-Modification: the script normalises to -16 LUFS and re-encodes to AAC, because
-the originals sit around -26 LUFS — far too quiet to work as an alarm.
-
-Note: CC0 covers the uploader's own recording. The text of the adhan is
-public domain independently, by age.
+```sh
+ffmpeg -i ~/Downloads/adhan.mp3 -af loudnorm=I=-16:TP=-1.5:LRA=11 \
+  -c:a aac -b:a 160k ~/Library/Application\ Support/Barakah/Athan/Adhan.m4a
 ```
 
-If you would rather use your own recording — one your masjid made, or one you
-have rights to — Barakah supports that directly: **Settings → Athan → Choose a
-file…**. That path is a first-class feature, not a fallback.
+Whatever you put there stays on your machine. It is not part of this repository
+and is not included in any release.
 
 ## Code dependencies
 
