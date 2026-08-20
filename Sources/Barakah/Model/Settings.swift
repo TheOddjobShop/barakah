@@ -4,10 +4,13 @@ import Adhan
 
 /// How the menu bar item presents itself.
 public enum MenuBarStyle: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// Icon plus "Asr in 1h 12m".
-    case countdown
-    /// Icon plus the next prayer's clock time.
+    /// Icon plus the next prayer's clock time — the default. A label that just
+    /// says "Asr 4:54 PM" sits still; a live countdown in the menu bar pulls the
+    /// eye every second, which is the opposite of what a prayer reminder should
+    /// do to your attention.
     case nextTime
+    /// Icon plus "Asr in 1h 12m", for anyone who does want the countdown.
+    case countdown
     /// Icon plus the next prayer's name.
     case nextName
     /// Icon only.
@@ -75,7 +78,7 @@ public struct SettingsData: Codable, Hashable, Sendable {
     public var notificationSoundEnabled: Bool = false
 
     // MARK: General
-    public var menuBarStyle: MenuBarStyle = .countdown
+    public var menuBarStyle: MenuBarStyle = .nextTime
     public var use24HourClock: Bool = false
     public var showHijriDate: Bool = true
     public var showSunrise: Bool = true
