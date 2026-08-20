@@ -34,9 +34,9 @@ cask "barakah" do
 
     It ships no adhan recording, because every recording of the adhan is
     copyrighted even though the words are not. The default sound is a
-    synthesised chime. To use a real one, either pick your own file under
-    Settings > Athan, or run:
+    synthesised chime. To use a real one, point Barakah at a file you have
+    rights to under Settings > Athan, or drop it into:
 
-      curl -fsSL https://raw.githubusercontent.com/justin06lee/barakah/master/scripts/fetch-adhan.sh | bash -s adhan
+      ~/Library/Application Support/Barakah/Athan/
   EOS
 end
