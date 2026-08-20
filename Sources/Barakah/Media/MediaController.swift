@@ -1,0 +1,188 @@
+import Foundation
+import Observation
+import OSLog
+
+/// What Barakah actually did to the user's media, so it can be shown in the UI
+/// and undone precisely afterwards.
+public struct MediaInterruption: Sendable, Equatable {
+    /// Scriptable players that were playing and have been paused by us.
+    public var pausedPlayers: [String] = []
+    /// True if a MediaRemote pause was issued.
+    public var sentMediaRemotePause: Bool = false
+    /// True if system output was muted by us.
+    public var mutedOutput: Bool = false
+    /// Human description of what was playing, when we could tell.
+    public var nowPlayingDescription: String?
+
+    public var didAnything: Bool {
+        !pausedPlayers.isEmpty || sentMediaRemotePause || mutedOutput
+    }
+
+    /// One-line summary for the athan window, e.g. "Paused Spotify".
+    public var summary: String? {
+        var parts: [String] = []
+        if !pausedPlayers.isEmpty {
+            parts.append("Paused \(pausedPlayers.formattedList())")
+        } else if sentMediaRemotePause {
+            parts.append(nowPlayingDescription.map { "Paused \($0)" } ?? "Paused playback")
+        }
+        if mutedOutput { parts.append("output muted") }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+}
+
+/// Decides *how* to silence media at athan time, in order of precision, and
+/// remembers enough to put things back exactly as they were.
+///
+/// The layering matters. MediaRemote reaches the most players but tells us the
+/// least (Apple gates now-playing reads on current systems). AppleScript reaches
+/// fewer players but answers questions honestly. Muting reaches everything but
+/// stops nothing. Used together they cover the real world; used alone each has a
+/// visible hole.
+@MainActor
+@Observable
+public final class MediaController {
+    /// The interruption currently in effect, if any.
+    public private(set) var active: MediaInterruption?
+    /// Set when a scriptable player refused automation, so the UI can prompt.
+    public private(set) var needsAutomationPermission = false
+
+    private let bridge = MediaRemoteBridge.shared
+    private let scripts = ScriptablePlayerController.shared
+    private let muter = OutputMuter.shared
+    private let log = Logger(subsystem: Barakah.subsystem, category: "media")
+
+    public init() {}
+
+    /// True if at least one way of pausing media is available on this system.
+    public var canPauseMedia: Bool { bridge.canSendCommands || !ScriptablePlayer.all.isEmpty }
+
+    /// Whether now-playing state can be inspected. When false, Barakah still
+    /// pauses correctly — it just cannot describe what it paused.
+    public var canDetectPlayback: Bool { bridge.canReadState }
+
+    /// Silence whatever is playing, according to `mode`.
+    @discardableResult
+    public func interrupt(mode: MediaPauseMode, settings: SettingsData) async -> MediaInterruption {
+        guard mode.pausesPlayers || mode.mutesOutput else { return MediaInterruption() }
+
+        // Anything still paused from a previous athan is released first, so the
+        // record of "what to resume" never straddles two prayers.
+        if active != nil { await resume(force: true) }
+
+        var interruption = MediaInterruption()
+        let excluded = Set(settings.mediaExcludedBundleIDs)
+
+        // Layer 1 — ask scriptable players directly. Done first because it is the
+        // only layer that can tell us what was genuinely playing, which is what
+        // makes an accurate resume possible.
+        if settings.useAppleScript {
+            let playing = await scripts.playingPlayers(excluding: excluded)
+            for player in playing where await scripts.pause(player) {
+                interruption.pausedPlayers.append(player.bundleIdentifier)
+            }
+            needsAutomationPermission = await scripts.hasDeniedPlayers
+        }
+
+        // Layer 2 — MediaRemote, for everything else: browsers, IINA, and any
+        // app that publishes to Now Playing.
+        if settings.useMediaRemote, bridge.canSendCommands {
+            let nowPlaying = await bridge.nowPlaying()
+            interruption.nowPlayingDescription = nowPlaying?.displayDescription
+
+            let ownerExcluded = nowPlaying?.bundleIdentifier.map(excluded.contains) ?? false
+            // Already handled by the precise layer above?
+            let handledByScript = nowPlaying?.bundleIdentifier
+                .map(interruption.pausedPlayers.contains) ?? false
+
+            if !ownerExcluded && !handledByScript {
+                // Deliberately an explicit pause and never a toggle: if nothing is
+                // playing this is a no-op, whereas a toggle would start music in
+                // the middle of the adhan.
+                if bridge.send(.pause) {
+                    interruption.sentMediaRemotePause = true
+                }
+            }
+        }
+
+        // Layer 3 — the guarantee of silence, for sources neither layer reaches.
+        if mode.mutesOutput, muter.mute() {
+            interruption.mutedOutput = true
+        }
+
+        active = interruption.didAnything ? interruption : nil
+        log.info("interrupted media: \(interruption.summary ?? "nothing was playing", privacy: .public)")
+        return interruption
+    }
+
+    /// Put back what we took away.
+    ///
+    /// Only players we actually paused are resumed, and a bare MediaRemote pause
+    /// is only reversed when we had positive evidence something was playing —
+    /// otherwise "resume" could start audio the user never asked for.
+    public func resume(force: Bool = false) async {
+        guard let interruption = active else {
+            if force { muter.restore() }
+            return
+        }
+        active = nil
+
+        if interruption.mutedOutput { muter.restore() }
+
+        for bundleID in interruption.pausedPlayers {
+            guard let player = ScriptablePlayer.all.first(where: { $0.bundleIdentifier == bundleID }) else { continue }
+            await scripts.play(player)
+        }
+
+        if interruption.sentMediaRemotePause, interruption.nowPlayingDescription != nil {
+            bridge.send(.play)
+        }
+
+        log.info("resumed media")
+    }
+
+    /// Drop any record of an interruption without touching playback — used when
+    /// the user says "don't resume".
+    public func forget() {
+        if active?.mutedOutput == true { muter.restore() }
+        active = nil
+    }
+
+    /// A quick probe used by the settings screen to show the user what will and
+    /// will not work on their machine, rather than making them find out at Fajr.
+    public func diagnostics() async -> MediaDiagnostics {
+        let nowPlaying = await bridge.nowPlaying()
+        return MediaDiagnostics(
+            mediaRemoteLoaded: bridge.canSendCommands,
+            nowPlayingReadable: nowPlaying != nil,
+            nowPlayingDescription: nowPlaying?.displayDescription,
+            detectedPlayers: await scripts.playingPlayers().map(\.applicationName),
+            automationDenied: await scripts.hasDeniedPlayers
+        )
+    }
+}
+
+public struct MediaDiagnostics: Sendable, Equatable {
+    public var mediaRemoteLoaded: Bool
+    public var nowPlayingReadable: Bool
+    public var nowPlayingDescription: String?
+    public var detectedPlayers: [String]
+    public var automationDenied: Bool
+}
+
+extension Array where Element == String {
+    /// "Spotify", "Spotify and Music", "Spotify, Music and VLC".
+    func formattedList() -> String {
+        let names = map { bundleID -> String in
+            ScriptablePlayer.all
+                .first { $0.bundleIdentifier == bundleID }?
+                .applicationName ?? bundleID
+        }
+        switch names.count {
+        case 0: return ""
+        case 1: return names[0]
+        case 2: return "\(names[0]) and \(names[1])"
+        default: return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+        }
+    }
+}
