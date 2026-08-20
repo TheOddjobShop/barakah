@@ -35,8 +35,8 @@ CODESIGN_FLAGS := --force --entitlements $(ENTITLEMENTS)
 endif
 
 .DEFAULT_GOAL := all
-.PHONY: all build build-universal bundle icon install update run stop test clean \
-        reset-permissions adhan sign notarize dmg check cask
+.PHONY: all build build-universal assemble bundle icon install update run stop \
+        test clean reset-permissions adhan sign notarize dmg check cask
 
 ## The whole golden path.
 all: stop reset-permissions bundle install run
@@ -69,8 +69,12 @@ $(BUILD_DIR)/$(APP).icns: assets/icon.svg
 	done
 	@iconutil -c icns $(BUILD_DIR)/icon.iconset -o $@
 
-## Assemble the .app bundle.
-bundle: build icon
+## Assemble the .app bundle around whichever binary was just built.
+##
+## Split from the compile steps deliberately: `build` deletes the universal
+## product so the binary in use is never ambiguous, which means `dmg` cannot
+## depend on `bundle` without destroying the universal build it just made.
+assemble: icon
 	@echo "==> Assembling $(BUNDLE)"
 	@rm -rf $(BUNDLE)
 	@mkdir -p $(CONTENTS)/MacOS $(CONTENTS)/Resources/Athan
@@ -83,6 +87,11 @@ bundle: build icon
 	@# ships none — see assets/NOTICE.md — so this is normally empty.
 	@if [ -d Resources/Athan ]; then cp -R Resources/Athan/. $(CONTENTS)/Resources/Athan/ 2>/dev/null || true; fi
 	@$(MAKE) --no-print-directory sign
+	@lipo -archs $(CONTENTS)/MacOS/$(APP) | sed 's/^/    architectures: /'
+
+## Build for this machine and assemble.
+bundle: build
+	@$(MAKE) --no-print-directory assemble
 
 ## Code-sign the bundle.
 sign:
@@ -143,7 +152,7 @@ adhan:
 
 ## Package a distributable disk image.
 dmg: build-universal
-	@$(MAKE) --no-print-directory bundle
+	@$(MAKE) --no-print-directory assemble
 	@echo "==> Building $(DIST)/$(APP)_$(VERSION)_universal.dmg"
 	@rm -f $(DIST)/$(APP)_$(VERSION)_universal.dmg
 	@mkdir -p $(DIST)/dmg && rm -rf $(DIST)/dmg/*
@@ -152,7 +161,6 @@ dmg: build-universal
 	@hdiutil create -volname "$(APP) $(VERSION)" -srcfolder $(DIST)/dmg \
 		-ov -format ULFO $(DIST)/$(APP)_$(VERSION)_universal.dmg >/dev/null
 	@rm -rf $(DIST)/dmg
-	@lipo -archs $(CONTENTS)/MacOS/$(APP) | sed 's/^/    architectures: /'
 	@echo "    $(DIST)/$(APP)_$(VERSION)_universal.dmg"
 
 ## Notarize the disk image. Requires a Developer ID and a stored credential
