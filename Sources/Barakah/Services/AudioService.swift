@@ -135,15 +135,10 @@ public final class AudioService: NSObject {
             return try ChimeSynthesiser.url()
 
         case .bundled(let name):
-            for ext in ["m4a", "mp3", "caf", "wav", "aiff"] {
-                if let url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: "Athan") {
-                    return url
-                }
-                if let url = Bundle.main.url(forResource: name, withExtension: ext) {
-                    return url
-                }
+            guard let url = AthanLibrary.url(forResource: name) else {
+                throw AudioError.bundledSoundMissing(name)
             }
-            throw AudioError.bundledSoundMissing(name)
+            return url
 
         case .custom(let bookmark, _):
             var stale = false

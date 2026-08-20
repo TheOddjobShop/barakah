@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Barakah</string>
+	<key>CFBundleDisplayName</key>
+	<string>Barakah</string>
+	<key>CFBundleExecutable</key>
+	<string>Barakah</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.justin06lee.barakah</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__BUILD__</string>
+	<key>CFBundleIconFile</key>
+	<string>Barakah</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT licensed. See LICENSE.</string>
+
+	<!-- Menu bar only: no Dock tile, no app switcher entry. -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<key>NSLocationUsageDescription</key>
+	<string>Barakah uses your location to calculate accurate prayer times. Your location never leaves this Mac.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Barakah uses your location to calculate accurate prayer times. Your location never leaves this Mac.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Barakah uses your location to calculate accurate prayer times, and needs it in the background so times stay correct as you travel. Your location never leaves this Mac.</string>
+
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Barakah pauses Spotify, Music, VLC and QuickTime when the athan begins, and resumes them afterwards.</string>
+</dict>
+</plist>
