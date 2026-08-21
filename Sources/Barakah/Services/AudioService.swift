@@ -63,7 +63,10 @@ public final class AudioService: NSObject {
             let url = try resolve(sound)
             let newPlayer = try AVAudioPlayer(contentsOf: url)
             newPlayer.delegate = self
-            newPlayer.volume = Float(settings.athanVolume)
+            // Recordings arrive mastered anywhere from -27 to -9 dBFS, so the
+            // volume slider only means something once each file is corrected
+            // towards a common loudness.
+            newPlayer.volume = min(1, Float(settings.athanVolume) * AudioNormalizer.gain(for: url))
             newPlayer.prepareToPlay()
             guard newPlayer.play() else { throw AudioError.couldNotStart }
 
@@ -111,7 +114,7 @@ public final class AudioService: NSObject {
         guard !sound.isSilent, let url = try? resolve(sound) else { return }
         player = try? AVAudioPlayer(contentsOf: url)
         player?.delegate = self
-        player?.volume = Float(volume)
+        player?.volume = min(1, Float(volume) * AudioNormalizer.gain(for: url))
         player?.play()
         playingPrayer = nil
         duration = player?.duration ?? 0

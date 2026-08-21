@@ -162,24 +162,23 @@ under a blanket MIT or GPL code licence, with no audio licence and no
 attribution. One ships 47 of them. That is a habit, not a defence, and this
 project does not copy it.
 
-So Barakah plays whatever *you* point it at instead. Either pick a file:
+So Barakah plays whatever *you* point it at instead, and asks for it the first
+time it runs — drag a file onto the welcome window, or pick one, and that is the
+setup done.
 
-**Settings → Athan → Choose a file…**
+Later on, either **Settings → Athan → Choose a file…**, or drop a file into
+`~/Library/Application Support/Barakah/Athan/` and it appears in the sound list
+straight away, no restart. `.m4a`, `.mp3`, `.caf`, `.wav`, `.aiff` and `.ogg`
+all work.
 
-or drop one into `~/Library/Application Support/Barakah/Athan/` and it appears
-in the sound list straight away, no restart. `.m4a`, `.mp3`, `.caf`, `.wav`,
-`.aiff` and `.ogg` all work.
+Whatever you add gets **level-matched on playback**. Recordings in the wild are
+mastered nowhere near each other — measured examples run from −27 dBFS to
+−9 dBFS, an eighteen-decibel spread — so without correction the volume slider
+means nothing and your first athan either startles you or is inaudible. Barakah
+measures each file once and adjusts, so the slider does what it says.
 
-Most recordings are mastered too quiet — or too loud — to work as an alarm, so
-normalising on the way in makes the volume slider behave predictably:
-
-```sh
-ffmpeg -i ~/Downloads/adhan.mp3 -af loudnorm=I=-16:TP=-1.5:LRA=11 \
-  -c:a aac -b:a 160k ~/Library/Application\ Support/Barakah/Athan/Adhan.m4a
-```
-
-Whatever you put there stays on your machine. It is not part of this repository
-and rides along in no release.
+Whatever you add stays on your machine. It is not part of this repository and
+rides along in no release.
 
 [`assets/NOTICE.md`](assets/NOTICE.md) documents this in full, including the two
 widely-reused Wikimedia files that are tagged CC0 but are measurably

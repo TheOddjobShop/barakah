@@ -6,7 +6,7 @@
 
 APP          := Barakah
 BUNDLE_ID    := dev.justin06lee.barakah
-VERSION      := 0.1.0
+VERSION      := 0.1.1
 BUILD        := $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 
 BUILD_DIR    := .build

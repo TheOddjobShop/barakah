@@ -169,6 +169,31 @@ struct AthanSettingsView: View {
 
     var body: some View {
         Form {
+            if AthanLibrary.available().isEmpty {
+                Section {
+                    Label {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("No adhan recording installed")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("Barakah ships none, because every recording of the adhan is copyrighted even though the words are not. Add one you have and Barakah will match its volume to everything else.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack(spacing: 8) {
+                                Button("Choose a file…") { pickingForFajr = false; isPickingFile = true }
+                                Button("Open the Athan folder") {
+                                    NSWorkspace.shared.open(AthanLibrary.installedDirectory)
+                                }
+                            }
+                            .controlSize(.small)
+                            .padding(.top, 2)
+                        }
+                    } icon: {
+                        Image(systemName: "waveform.badge.plus").foregroundStyle(.orange)
+                    }
+                }
+            }
+
             Section("Sound") {
                 AthanSoundPicker(
                     title: "Athan",

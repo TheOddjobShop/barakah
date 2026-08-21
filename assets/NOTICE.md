@@ -67,13 +67,8 @@ Barakah plays any audio file you point it at. Two ways in:
   in the sound list straight away, no restart needed. `.m4a`, `.mp3`, `.caf`,
   `.wav`, `.aiff` and `.ogg` all work.
 
-Most adhan recordings are mastered far too quiet — or far too loud — to work as
-an alarm. Normalising on the way in makes the volume slider behave predictably:
-
-```sh
-ffmpeg -i ~/Downloads/adhan.mp3 -af loudnorm=I=-16:TP=-1.5:LRA=11 \
-  -c:a aac -b:a 160k ~/Library/Application\ Support/Barakah/Athan/Adhan.m4a
-```
+Barakah asks for a recording the first time it runs, and level-matches whatever
+you give it on playback, so no manual preparation is needed.
 
 Whatever you put there stays on your machine. It is not part of this repository
 and is not included in any release.

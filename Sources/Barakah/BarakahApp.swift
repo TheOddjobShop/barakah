@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var app: AppState?
     private var menuBar: MenuBarController?
     private var settingsWindow: NSWindow?
+    private var welcomeWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -49,6 +50,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep the login-item toggle honest: the user can flip it in System
         // Settings behind our back.
         state.updateSettings { $0.launchAtLogin = LaunchAtLogin.isEnabled }
+
+        // Barakah ships no adhan recording, so without this a new user's first
+        // prayer is announced by a synthesised bell and they reasonably assume
+        // the app is broken. Ask once, up front.
+        if !state.settings.hasCompletedOnboarding {
+            showWelcome()
+        }
+    }
+
+    func showWelcome() {
+        guard let app else { return }
+        if let window = welcomeWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        // Deliberately the same plain construction the settings window uses.
+        // Combining a titled window with .fullSizeContentView, a hidden title and
+        // preferredContentSize sizing produced an unsatisfiable constraint inside
+        // NSHostingController and trapped in AppKit at first launch — which, for
+        // a window that only ever appears on first launch, meant the app crashed
+        // for new users and nobody else.
+        let hosting = NSHostingController(rootView: WelcomeView(app: app) { [weak self] in
+            self?.app?.updateSettings { $0.hasCompletedOnboarding = true }
+            self?.welcomeWindow?.close()
+        })
+
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Welcome to Barakah"
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.delegate = self
+
+        welcomeWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -92,7 +131,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        guard (notification.object as? NSWindow) === settingsWindow else { return }
+        let closing = notification.object as? NSWindow
+
+        if closing === welcomeWindow {
+            // Closing the window counts as answering it. Asking again on every
+            // launch would be nagging, and the chime is a working default.
+            app?.updateSettings { $0.hasCompletedOnboarding = true }
+            welcomeWindow = nil
+            app?.flush()
+            NSApp.setActivationPolicy(.accessory)
+            return
+        }
+
+        guard closing === settingsWindow else { return }
         // Settings changes are debounced; make sure the last one reaches disk.
         app?.flush()
         // Dropping back to accessory keeps Barakah out of the app switcher once
