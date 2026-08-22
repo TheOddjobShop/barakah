@@ -31,6 +31,12 @@ public enum AthanSound: Codable, Hashable, Sendable {
         return false
     }
 
+    /// Resource name of the adhan shipped inside the app bundle.
+    ///
+    /// A user file of the same name in Application Support takes precedence, so
+    /// anyone who prefers a different reciter can simply drop theirs in.
+    public static let defaultBundledName = "Adhan"
+
     /// Human label for a bundled resource stem.
     public static func bundledDisplayName(for resource: String) -> String {
         resource

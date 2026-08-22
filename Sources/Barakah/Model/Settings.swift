@@ -55,7 +55,10 @@ public struct SettingsData: Codable, Hashable, Sendable {
     public var jumuahReminderMinutes: Int = 15
 
     // MARK: Audio
-    public var athanSound: AthanSound = .chime
+    /// The adhan bundled with the app — a CC0 recording, see assets/NOTICE.md.
+    /// Falls back to the synthesised chime if the resource is ever missing,
+    /// which is what a source build without the audio file gets.
+    public var athanSound: AthanSound = .bundled(AthanSound.defaultBundledName)
     /// Fajr has an extra line in the adhan, so it usually wants its own recording.
     public var fajrAthanSound: AthanSound?
     public var athanVolume: Double = 0.8

@@ -147,44 +147,39 @@ Playing it directly means:
 Per prayer you can choose whether the athan sounds at all, and Fajr can have its
 own recording — it has the extra line, `الصلاة خير من النوم`.
 
-### Barakah ships no adhan recording
+### The adhan it plays
 
-The default sound is a bell synthesised at runtime. That is deliberate.
+Barakah includes an adhan and uses it by default, so it works properly the
+moment you open it.
 
-The *text* of the adhan is roughly 1400 years old and unquestionably public
-domain. A **recording** of it is not: it carries the muezzin's performer's
-rights and the sound-recording copyright of whoever made it. Every adhan
-recording made in living memory is under copyright, and no mosque, waqf, or
-well-known muezzin has released one under a free licence.
+Which recording that is took some care. The *text* of the adhan is roughly 1400
+years old and is public domain by age, but a **recording** of it is a separate
+work: it carries the muezzin's performance rights and the sound-recording
+copyright of whoever made it. Every adhan recording made in living memory is
+under copyright, and no mosque, waqf, or well-known muezzin has released one
+freely. Sites offering adhan downloads at no charge are offering them to listen
+to — free of charge is not free to redistribute.
 
-Nearly every open-source prayer app bundles named-reciter recordings anyway,
-under a blanket MIT or GPL code licence, with no audio licence and no
-attribution. One ships 47 of them. That is a habit, not a defence, and this
-project does not copy it.
+What does exist is amateur field recordings whose recordist dedicated their own
+work to the public domain. Barakah bundles one of those, verified CC0 against
+the Wikimedia Commons API before it went in, and normalised to a sensible level.
+[`assets/NOTICE.md`](assets/NOTICE.md) has the full attribution and provenance —
+including the widely-reused files that *claim* CC0 but are measurably re-encoded
+commercial recordings, and how to tell the difference.
 
-So Barakah plays whatever *you* point it at instead, and asks for it the first
-time it runs — drag a file onto the welcome window, or pick one, and that is the
-setup done.
-
-Later on, either **Settings → Athan → Choose a file…**, or drop a file into
+**To use your own instead** — a particular muezzin, or your own masjid — drag it
+onto the welcome window at first launch, or later use **Settings → Athan →
+Choose a file…**. You can also drop a file into
 `~/Library/Application Support/Barakah/Athan/` and it appears in the sound list
 straight away, no restart. `.m4a`, `.mp3`, `.caf`, `.wav`, `.aiff` and `.ogg`
-all work.
+all work, and a file of yours named the same as the bundled one takes
+precedence.
 
 Whatever you add gets **level-matched on playback**. Recordings in the wild are
 mastered nowhere near each other — measured examples run from −27 dBFS to
 −9 dBFS, an eighteen-decibel spread — so without correction the volume slider
-means nothing and your first athan either startles you or is inaudible. Barakah
+means nothing and your athan either startles you or goes unheard. Barakah
 measures each file once and adjusts, so the slider does what it says.
-
-Whatever you add stays on your machine. It is not part of this repository and
-rides along in no release.
-
-[`assets/NOTICE.md`](assets/NOTICE.md) documents this in full, including the two
-widely-reused Wikimedia files that are tagged CC0 but are measurably
-re-encoded MP3s, and the "public domain" recording justified on the grounds that
-"Adhan has been in effect since c.622 A.D." — a 1985 performance by a singer who
-died in 2021.
 
 ## Keeping time when macOS does not
 

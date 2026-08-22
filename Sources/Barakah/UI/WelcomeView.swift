@@ -3,12 +3,11 @@ import UniformTypeIdentifiers
 
 /// What Barakah shows the first time it runs.
 ///
-/// It exists for one reason. Barakah ships no adhan recording — every recording
-/// of the adhan is under copyright even though the words are not — so out of the
-/// box the athan is a synthesised chime. Somebody who installs a prayer app and
-/// hears a bell reasonably concludes it is broken or cheap. This makes choosing
-/// a real recording the first thing that happens, in one drag, instead of
-/// something to discover three settings tabs deep.
+/// Barakah includes a freely-licensed adhan, so this is not a setup step the
+/// user has to complete — it works if they close it immediately. It exists
+/// because which muezzin you hear five times a day is a real preference, and
+/// burying "use your own recording" three settings tabs deep means almost
+/// nobody discovers it.
 struct WelcomeView: View {
     @Bindable var app: AppState
     var onFinish: () -> Void
@@ -62,10 +61,10 @@ struct WelcomeView: View {
 
     private var body_: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Choose your athan")
+            Text("Your athan")
                 .font(.system(size: 14, weight: .semibold))
 
-            Text("Barakah doesn't include an adhan recording — every recording of the adhan is copyrighted, even though the words themselves are not. Use one you have, and Barakah will match its volume to everything else.")
+            Text("Barakah comes with a freely-licensed adhan, so you're ready to go. If you'd rather hear a particular muezzin, use your own recording — Barakah will match its volume to everything else.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -151,8 +150,8 @@ struct WelcomeView: View {
                 Button("Done") { onFinish() }
                     .keyboardShortcut(.defaultAction)
             } else {
-                Button("Use the built-in chime") {
-                    app.updateSettings { $0.athanSound = .chime }
+                Button("Use the included adhan") {
+                    app.updateSettings { $0.athanSound = .bundled(AthanSound.defaultBundledName) }
                     onFinish()
                 }
                 .keyboardShortcut(.defaultAction)

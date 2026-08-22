@@ -3,60 +3,65 @@
 The MIT licence in [`LICENSE`](../LICENSE) covers this repository's source code.
 This file records everything else.
 
-## Bundled audio: none
+## Bundled audio
 
-**Barakah ships no adhan recording.** The default athan sound is a bell
-synthesised at runtime by
-[`ChimeSynthesiser.swift`](../Sources/Barakah/Services/ChimeSynthesiser.swift) —
-no audio file exists in this repository, and none is downloaded unless you ask
-for one.
+### `Resources/Athan/Adhan.m4a`
 
-That is a deliberate decision, and it is worth explaining, because almost every
-other open-source prayer app does the opposite.
+```
+"Muslim calling to prayer" by Aishatu98
+Source:  https://commons.wikimedia.org/wiki/File:Muslim_calling_to_prayer.ogg
+License: CC0 1.0 Universal (Public Domain Dedication)
+         https://creativecommons.org/publicdomain/zero/1.0/
 
-### Why
+Attribution is not required under CC0. It is given here as a courtesy.
+Modifications: normalised to -16 LUFS with a two-pass loudnorm, downmixed to
+mono, and re-encoded to AAC at 96 kbps.
+```
 
-The *text* of the adhan is roughly 1400 years old and unquestionably in the
-public domain. Nobody can claim rights in the words. But a **recording** of the
-adhan carries two separate, live copyrights:
+Verified against the Wikimedia Commons API before bundling: `LicenseShortName`
+is `CC0`, `AttributionRequired` is `false`, and `Restrictions` is empty. CC0 is
+a dedication to the public domain, so redistribution inside this app is
+permitted without condition.
 
-1. the **performer's rights** in the muezzin's vocal performance, and
-2. the **sound recording copyright** owned by whoever fixed it — the recordist,
-   the mosque, or a producer.
+Note the two layers being separated here. The **text** of the adhan is roughly
+1400 years old and is in the public domain by age. The **recording** is a
+separate copyrightable work, and this one is free only because its recordist
+dedicated it. That is why one specific file is bundled rather than any adhan
+recording that happens to be downloadable.
 
-In the United States sound recordings are federally protected and, under the
-Music Modernization Act, pre-1972 recordings are protected for up to 95 years
-from publication. In the EU, phonograms get 70 years. So *every adhan recording
-made in living memory is copyrighted*, however ancient the words are.
+### Why this one
 
-No mosque, waqf, broadcaster, or well-known muezzin has issued an explicit free
-licence for a recording. Not the Haramain authorities, not Diyanet, not any of
-the reciters whose names appear bundled inside other apps. The free adhan audio
-that genuinely exists is amateur field recordings where the *recordist*
-dedicated their own fixation to the public domain.
+Amateur field recordings whose recordist dedicated them are, in practice, the
+only freely-licensed adhan audio that exists. No mosque, waqf, broadcaster, or
+well-known muezzin has released a recording under a free licence. Sites that
+offer adhan downloads at no cost are offering them to *listen* to — free of
+charge is not the same as free to redistribute, and several such sites carry an
+explicit "all rights reserved".
+
+Two categories were checked and rejected:
+
+- **License-laundered uploads.** Several Wikimedia files tagged CC0 or CC BY-SA
+  are re-encoded commercial recordings relabelled as own work. `Beautiful
+  adhan.ogg` and `Azan.ogg` both measure around −9 LUFS with a hard spectral
+  cutoff near 10 kHz — the fingerprint of a low-bitrate MP3, not a field
+  recording. The bundled file shows no such cutoff and shares a consistent
+  high-band signature with its uploader's other recordings, which is what
+  genuine own-work looks like.
+- **Category errors.** `Call to prayer by Sabah Fakhry.mp3` is tagged public
+  domain on the grounds that "Adhan has been in effect since c.622 A.D." — the
+  exact conflation of text and recording described above. It is a 1985
+  performance by a singer who died in 2021, sourced from YouTube.
+
+Also rejected: Pixabay, whose licence forbids redistributing an unmodified file
+"on a standalone basis", which is precisely what bundling one would be.
 
 ### What other apps do
 
-A survey of the open-source macOS and mobile prayer apps found the same pattern
-everywhere: named-reciter recordings — Abdul Basit, Mishary Rashid al-Afasy,
-al-Minshawi, "Adhan Makkah", "Adhan Madinah" — bundled under a blanket MIT or
-GPL code licence with **no audio licence and no attribution at all**. One app
-ships 47 such files. Another ships ripped iOS system sounds. This is a habit
-rather than a defence, and it is not one worth copying.
-
-Two things are also worth flagging for anyone tempted by an obvious-looking
-source:
-
-- Several Wikimedia Commons files tagged CC0 or CC BY-SA are **license
-  laundering**. `Beautiful adhan.ogg` and `Azan.ogg` both measure around
-  −9 LUFS with a hard spectral cutoff near 10 kHz — the fingerprint of a
-  low-bitrate MP3 re-encoded and relabelled as own work, not a field recording.
-- `Call to prayer by Sabah Fakhry.mp3` is tagged public domain with the
-  justification "Adhan has been in effect since c.622 A.D." That is exactly the
-  category error described above: it is a 1985 recording by a singer who died in
-  2021, sourced from YouTube.
-- Pixabay's licence forbids redistributing an unmodified file "on a standalone
-  basis", which is precisely what bundling one in a repository would be.
+The surveyed open-source prayer apps bundle named-reciter recordings — Abdul
+Basit, Mishary Rashid al-Afasy, al-Minshawi, "Adhan Makkah" — under a blanket
+MIT or GPL code licence with no audio licence and no attribution. One ships 47
+such files. That is a habit rather than a defence, and this project does not
+follow it.
 
 ## Using your own recording
 

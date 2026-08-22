@@ -6,7 +6,7 @@
 
 APP          := Barakah
 BUNDLE_ID    := dev.justin06lee.barakah
-VERSION      := 0.1.1
+VERSION      := 0.2.0
 BUILD        := $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 
 BUILD_DIR    := .build
@@ -83,8 +83,8 @@ assemble: icon
 	@sed -e 's|__VERSION__|$(VERSION)|' -e 's|__BUILD__|$(BUILD)|' \
 		Resources/Info.plist > $(CONTENTS)/Info.plist
 	@printf 'APPL????' > $(CONTENTS)/PkgInfo
-	@# Any athan recordings sitting in Resources/Athan get bundled. The repo
-	@# ships none — see assets/NOTICE.md — so this is normally empty.
+	@# Athan recordings in Resources/Athan get bundled into the app. What ships
+	@# there is CC0 and redistributable — see assets/NOTICE.md.
 	@if [ -d Resources/Athan ]; then cp -R Resources/Athan/. $(CONTENTS)/Resources/Athan/ 2>/dev/null || true; fi
 	@$(MAKE) --no-print-directory sign
 	@lipo -archs $(CONTENTS)/MacOS/$(APP) | sed 's/^/    architectures: /'

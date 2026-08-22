@@ -174,3 +174,48 @@ struct MediaControllerTests {
         #expect(interruption.isResumable)
     }
 }
+
+@Suite("Bundled adhan")
+struct BundledAdhanTests {
+
+    @Test("A new install defaults to the bundled adhan, not the chime")
+    func defaultIsTheBundledAdhan() {
+        let settings = SettingsData()
+        guard case .bundled(let name) = settings.athanSound else {
+            Issue.record("a fresh install should default to the bundled recording, got \(settings.athanSound)")
+            return
+        }
+        #expect(name == AthanSound.defaultBundledName)
+    }
+
+    @Test("Fajr has no separate sound unless the user asks for one")
+    func fajrFollowsTheDefault() {
+        let settings = SettingsData()
+        #expect(settings.fajrAthanSound == nil)
+        // sound(for:) must fall through to the main setting rather than nil out.
+        if case .bundled(let name) = settings.sound(for: .fajr) {
+            #expect(name == AthanSound.defaultBundledName)
+        } else {
+            Issue.record("Fajr should fall back to the bundled adhan")
+        }
+    }
+
+    @Test("A user's own file of the same name wins over the bundled one")
+    func userFileTakesPrecedence() throws {
+        // AthanLibrary prefers Application Support over the app bundle, which is
+        // what lets someone replace the shipped recording with their own reciter
+        // without touching settings.
+        let installed = AthanLibrary.installedDirectory
+        let marker = installed.appendingPathComponent("\(AthanSound.defaultBundledName).m4a")
+        let alreadyThere = FileManager.default.fileExists(atPath: marker.path)
+
+        if !alreadyThere {
+            FileManager.default.createFile(atPath: marker.path, contents: Data([0]))
+        }
+        defer { if !alreadyThere { try? FileManager.default.removeItem(at: marker) } }
+
+        let resolved = try #require(AthanLibrary.url(forResource: AthanSound.defaultBundledName))
+        #expect(resolved.path.hasPrefix(installed.path),
+                "a file in Application Support must shadow the bundled resource")
+    }
+}
