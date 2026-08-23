@@ -7,6 +7,10 @@ This file records everything else.
 
 ### `Resources/Athan/Adhan.m4a`
 
+The build embeds this file directly in the Barakah executable. At runtime it is
+materialised in the user's cache directory because AVAudioPlayer requires a file
+URL. It is still the same asset, with the following provenance and licence:
+
 ```
 "Muslim calling to prayer" by Aishatu98
 Source:  https://commons.wikimedia.org/wiki/File:Muslim_calling_to_prayer.ogg
@@ -72,7 +76,7 @@ Barakah plays any audio file you point it at. Two ways in:
   in the sound list straight away, no restart needed. `.m4a`, `.mp3`, `.caf`,
   `.wav`, `.aiff` and `.ogg` all work.
 
-Barakah asks for a recording the first time it runs, and level-matches whatever
+Barakah uses the embedded recording by default and level-matches any replacement
 you give it on playback, so no manual preparation is needed.
 
 Whatever you put there stays on your machine. It is not part of this repository

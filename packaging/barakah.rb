@@ -32,10 +32,8 @@ cask "barakah" do
     Prayer times are computed on your Mac and work offline. The only network
     call is Apple's geocoder, used to turn coordinates into a place name.
 
-    It ships no adhan recording, because every recording of the adhan is
-    copyrighted even though the words are not. The default sound is a
-    synthesised chime. To use a real one, point Barakah at a file you have
-    rights to under Settings > Athan, or drop it into:
+    Barakah includes a freely licensed adhan and uses it by default. To use your
+    own recording instead, choose one under Settings > Athan, or drop it into:
 
       ~/Library/Application Support/Barakah/Athan/
   EOS

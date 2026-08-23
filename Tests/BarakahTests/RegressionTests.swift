@@ -175,7 +175,7 @@ struct MediaControllerTests {
     }
 }
 
-@Suite("Bundled adhan")
+@Suite("Bundled adhan", .serialized)
 struct BundledAdhanTests {
 
     @Test("A new install defaults to the bundled adhan, not the chime")
@@ -198,6 +198,17 @@ struct BundledAdhanTests {
         } else {
             Issue.record("Fajr should fall back to the bundled adhan")
         }
+    }
+
+    @Test("The default adhan is embedded in a plain SwiftPM executable")
+    func defaultAdhanTravelsWithTheExecutable() throws {
+        let url = try #require(AthanLibrary.url(forResource: AthanSound.defaultBundledName))
+        let data = try Data(contentsOf: url)
+
+        #expect(url.pathExtension == "m4a")
+        #expect(data.count > 1_000_000, "the resolved file should be the recording, not a placeholder")
+        #expect(data.dropFirst(4).starts(with: Data("ftyp".utf8)),
+                "the embedded default should materialise as an MPEG-4 audio file")
     }
 
     @Test("A user's own file of the same name wins over the bundled one")

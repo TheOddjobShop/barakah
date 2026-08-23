@@ -306,8 +306,8 @@ struct AthanSoundPicker: View {
     @Binding var sound: AthanSound
     var onChooseFile: () -> Void
 
-    /// Recordings installed by the user or bundled with the app, discovered at
-    /// runtime so `make adhan` needs no code change to take effect.
+    /// Recordings installed by the user or shipped inside the executable,
+    /// discovered at runtime so imported files need no code change to appear.
     private var bundledNames: [String] { AthanLibrary.available() }
 
     var body: some View {

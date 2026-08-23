@@ -6,7 +6,7 @@
 
 APP          := Barakah
 BUNDLE_ID    := dev.justin06lee.barakah
-VERSION      := 0.2.0
+VERSION      := 0.2.1
 BUILD        := $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 
 BUILD_DIR    := .build
@@ -77,15 +77,14 @@ $(BUILD_DIR)/$(APP).icns: assets/icon.svg
 assemble: icon
 	@echo "==> Assembling $(BUNDLE)"
 	@rm -rf $(BUNDLE)
-	@mkdir -p $(CONTENTS)/MacOS $(CONTENTS)/Resources/Athan
+	@mkdir -p $(CONTENTS)/MacOS $(CONTENTS)/Resources
 	@cp $(BINARY) $(CONTENTS)/MacOS/$(APP)
 	@cp $(BUILD_DIR)/$(APP).icns $(CONTENTS)/Resources/$(APP).icns
 	@sed -e 's|__VERSION__|$(VERSION)|' -e 's|__BUILD__|$(BUILD)|' \
 		Resources/Info.plist > $(CONTENTS)/Info.plist
 	@printf 'APPL????' > $(CONTENTS)/PkgInfo
-	@# Athan recordings in Resources/Athan get bundled into the app. What ships
-	@# there is CC0 and redistributable — see assets/NOTICE.md.
-	@if [ -d Resources/Athan ]; then cp -R Resources/Athan/. $(CONTENTS)/Resources/Athan/ 2>/dev/null || true; fi
+	@# The CC0 adhan is embedded in the executable by Package.swift, so the app
+	@# does not need a loose audio resource beside it. See assets/NOTICE.md.
 	@$(MAKE) --no-print-directory sign
 	@lipo -archs $(CONTENTS)/MacOS/$(APP) | sed 's/^/    architectures: /'
 
