@@ -1,8 +1,15 @@
-# Barakah — a macOS menu bar prayer companion.
+# Barakah — a macOS menu bar prayer companion, with a GNOME tray build for Linux.
 #
 # `make` alone does the whole golden path: build, clear stale permission grants,
 # install to /Applications, and relaunch. Everything else is a narrower slice of
 # that same sequence.
+#
+# On Linux the same `make` builds and installs the tray app in linux/ instead;
+# its targets live in linux/Makefile.linux.
+
+ifeq ($(shell uname -s),Linux)
+include linux/Makefile.linux
+else
 
 APP          := Barakah
 BUNDLE_ID    := dev.justin06lee.barakah
@@ -36,7 +43,7 @@ endif
 
 .DEFAULT_GOAL := all
 .PHONY: all build build-universal assemble bundle icon install update run stop \
-        test clean reset-permissions sign notarize dmg check cask
+        test test-linux clean reset-permissions sign notarize dmg check cask
 
 ## The whole golden path.
 all: stop reset-permissions bundle install run
@@ -136,14 +143,19 @@ stop:
 update: stop reset-permissions bundle install run
 	@echo "==> $(APP) updated to $(VERSION) (build $(BUILD))."
 
-## Run the test suite.
+## Run the test suite: the Swift tests, then the Linux port's tests, which pin
+## its calculation to this engine through linux/tests/parity.json.
 test:
 	@swift test
+	@$(MAKE) --no-print-directory test-linux
+
+test-linux:
+	@cd linux && python3 -m unittest discover -s tests -t .
 
 ## Build and typecheck without installing — what CI runs.
 check:
 	@swift build -c release --disable-sandbox
-	@swift test
+	@$(MAKE) --no-print-directory test
 
 ## Package a distributable disk image.
 dmg: build-universal
@@ -182,3 +194,5 @@ cask:
 	@sed -e 's|__VERSION__|$(VERSION)|' \
 	     -e "s|__SHA256__|$$(shasum -a 256 $(DIST)/$(APP)_$(VERSION)_universal.dmg | cut -d' ' -f1)|" \
 	     packaging/barakah.rb
+
+endif

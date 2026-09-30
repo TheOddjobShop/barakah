@@ -1,0 +1,131 @@
+# Barakah for Linux — the GNOME tray build. Included by the top-level Makefile
+# when `uname -s` is Linux; the macOS targets never see this file.
+#
+# `make` alone does the whole golden path: check dependencies, stage, install
+# for this user under ~/.local, and (re)launch. Nothing needs root.
+
+APP_ID       := dev.justin06lee.barakah
+PREFIX       ?= $(HOME)/.local
+APP_DIR      := $(PREFIX)/share/barakah/app
+BIN_DIR      := $(PREFIX)/bin
+LAUNCHER     := $(BIN_DIR)/barakah
+DESKTOP_DIR  := $(PREFIX)/share/applications
+ICON_ROOT    := $(PREFIX)/share/icons/hicolor
+STAGE        := .build/linux
+PYTHON       := $(shell test -x /usr/bin/python3 && echo /usr/bin/python3 || command -v python3)
+
+# The introspection modules the tray app imports, and the Ubuntu/Debian
+# packages that provide them.
+GI_MODULES := Gtk:3.0 AyatanaAppIndicator3:0.1 Gst:1.0 GstPbutils:1.0
+APT_PACKAGES := python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 \
+                gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 gstreamer1.0-plugins-good \
+                gstreamer1.0-plugins-bad libnotify-bin gir1.2-geoclue-2.0 gir1.2-gweather-4.0
+
+.DEFAULT_GOAL := all
+.PHONY: all build deps install run stop update test check uninstall clean
+
+## The whole golden path.
+all: stop install run
+	@echo "==> Barakah is installed and running."
+	@echo "    Look for the crescent in the top bar, and Barakah in the app grid."
+
+## Verify every runtime dependency is present, and say exactly what to install if not.
+deps:
+	@test -n "$(PYTHON)" || { echo "!! python3 not found. Install it with: sudo apt install python3"; exit 1; }
+	@$(PYTHON) -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' || { \
+		echo "!! Python 3.9 or newer is required."; exit 1; }
+	@missing=""; for m in $(GI_MODULES); do \
+		$(PYTHON) -c "import gi; gi.require_version('$${m%%:*}', '$${m##*:}'); from gi.repository import $${m%%:*}" \
+			>/dev/null 2>&1 || missing="$$missing $$m"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "!! Missing GObject introspection modules:$$missing"; \
+		echo "   On Ubuntu or Debian: sudo apt install $(APT_PACKAGES)"; \
+		exit 1; \
+	fi
+	@command -v notify-send >/dev/null || echo "   note: notify-send not found (libnotify-bin); notifications need it."
+	@$(PYTHON) -c "import gi; gi.require_version('GWeather', '4.0'); from gi.repository import GWeather" >/dev/null 2>&1 \
+		|| echo "   note: libgweather (gir1.2-gweather-4.0) not found; city search falls back to coordinates."
+	@$(PYTHON) -c "import gi; gi.require_version('Geoclue', '2.0'); from gi.repository import Geoclue" >/dev/null 2>&1 \
+		|| echo "   note: GeoClue (gir1.2-geoclue-2.0) not found; automatic location is unavailable."
+	@command -v wpctl >/dev/null && command -v pw-dump >/dev/null \
+		|| echo "   note: PipeWire tools not found; \"Pause and mute\" will pause without muting."
+
+## Stage the app: the Python package, the bundled adhan, icons, and the launcher.
+build: deps
+	@echo "==> Staging Barakah for Linux"
+	@rm -rf $(STAGE) && mkdir -p $(STAGE)/app/resources/Athan $(STAGE)/app/resources/icons
+	@cp -R linux/barakah $(STAGE)/app/barakah
+	@find $(STAGE)/app -name '__pycache__' -prune -exec rm -rf {} +
+	@cp Resources/Athan/Adhan.m4a $(STAGE)/app/resources/Athan/
+	@cp assets/NOTICE.md $(STAGE)/app/resources/NOTICE.md
+	@cp assets/icon.svg $(STAGE)/app/resources/barakah.svg
+	@cp linux/data/icons/*.svg $(STAGE)/app/resources/icons/
+	@$(PYTHON) -m compileall -q $(STAGE)/app/barakah
+	@sed -e 's|@PYTHON@|$(PYTHON)|' -e 's|@APP_DIR@|$(APP_DIR)|' linux/data/barakah.sh > $(STAGE)/barakah
+	@chmod +x $(STAGE)/barakah
+	@sed -e 's|@LAUNCHER@|$(LAUNCHER)|' linux/data/$(APP_ID).desktop.in > $(STAGE)/$(APP_ID).desktop
+
+## Install for this user: ~/.local/share/barakah, ~/.local/bin/barakah, the
+## app-grid entry and its icon.
+install: build
+	@echo "==> Installing to $(PREFIX)"
+	@rm -rf $(APP_DIR) && mkdir -p $(dir $(APP_DIR)) $(BIN_DIR) $(DESKTOP_DIR) $(ICON_ROOT)/scalable/apps
+	@cp -R $(STAGE)/app $(APP_DIR)
+	@install -m 755 $(STAGE)/barakah $(LAUNCHER)
+	@install -m 644 $(STAGE)/$(APP_ID).desktop $(DESKTOP_DIR)/$(APP_ID).desktop
+	@install -m 644 assets/icon.svg $(ICON_ROOT)/scalable/apps/$(APP_ID).svg
+	@if command -v rsvg-convert >/dev/null; then \
+		for size in 48 64 128 256; do \
+			mkdir -p $(ICON_ROOT)/$${size}x$${size}/apps; \
+			rsvg-convert -w $$size -h $$size assets/icon.svg -o $(ICON_ROOT)/$${size}x$${size}/apps/$(APP_ID).png; \
+		done; \
+	fi
+	@# GTK trusts an existing icon-theme.cache over the directory, so an icon
+	@# copied in after it was built stays invisible until it is rebuilt. Never
+	@# create one where none exists.
+	@-[ -f $(ICON_ROOT)/icon-theme.cache ] && gtk-update-icon-cache -q -t -f $(ICON_ROOT) >/dev/null 2>&1 || true
+	@-update-desktop-database -q $(DESKTOP_DIR) >/dev/null 2>&1 || true
+	@# An enabled "Launch at login" points at the launcher; refresh it too.
+	@if [ -f $(HOME)/.config/autostart/$(APP_ID).desktop ]; then \
+		sed -i -e 's|^Exec=.*|Exec=$(LAUNCHER) --background|' $(HOME)/.config/autostart/$(APP_ID).desktop; fi
+	@case ":$$PATH:" in *":$(BIN_DIR):"*) ;; *) \
+		echo "   note: $(BIN_DIR) is not on your PATH; the app grid entry works regardless.";; esac
+
+## Launch the installed app, detached from this shell.
+run:
+	@echo "==> Launching Barakah"
+	@setsid -f $(LAUNCHER) >/dev/null 2>&1 < /dev/null
+
+## Quit any running copy — politely over D-Bus first, then by name.
+stop:
+	@-gdbus call --session --dest $(APP_ID) --object-path /dev/justin06lee/barakah \
+		--method org.gtk.Actions.Activate quit '[]' '{}' >/dev/null 2>&1 || true
+	@sleep 1
+	@-pkill -f '^barakah( |$$)' 2>/dev/null || true
+
+## Full refresh of a running install: stop, remove, rebuild, reinstall, relaunch.
+update: stop
+	@rm -rf $(APP_DIR)
+	@$(MAKE) --no-print-directory install run
+	@echo "==> Barakah updated."
+
+test:
+	@cd linux && $(PYTHON) -m unittest discover -s tests -t . -v
+
+## Everything CI would run: dependency check, staging, tests.
+check: build test
+
+## Remove everything `make` installed, plus pending notification timers. Your
+## settings and any recordings you added to ~/.local/share/barakah/Athan stay.
+uninstall: stop
+	@rm -rf $(APP_DIR) $(LAUNCHER) $(DESKTOP_DIR)/$(APP_ID).desktop \
+		$(HOME)/.config/autostart/$(APP_ID).desktop
+	@rm -f $(ICON_ROOT)/scalable/apps/$(APP_ID).svg $(ICON_ROOT)/*/apps/$(APP_ID).png
+	@-[ -f $(ICON_ROOT)/icon-theme.cache ] && gtk-update-icon-cache -q -t -f $(ICON_ROOT) >/dev/null 2>&1 || true
+	@-systemctl --user stop 'barakah-notify-*.timer' >/dev/null 2>&1 || true
+	@echo "==> Removed. Settings remain in ~/.config/barakah, recordings in ~/.local/share/barakah/Athan."
+
+clean:
+	@rm -rf $(STAGE)
+	@echo "==> Cleaned"
