@@ -28,3 +28,7 @@ notarize.json
 .vscode/
 .idea/
 *.swp
+
+# Python (the Linux tray app)
+__pycache__/
+*.pyc
