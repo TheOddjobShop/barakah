@@ -20,11 +20,12 @@ and tries to do them without gaps:
 - **Media that stops.** When the athan begins, whatever you were listening to
   pauses, and comes back afterwards if you want it to.
 
-It is a menu bar app: no Dock icon, no window unless you open one.
+It is a menu bar app: no Dock icon, no window unless you open one. On Linux the
+same app lives in the GNOME top bar as a tray icon — see [On Linux](#on-linux).
 
 ## Install
 
-Requires macOS 14 (Sonoma) or later.
+Requires macOS 14 (Sonoma) or later. For Linux, see [On Linux](#on-linux).
 
 **Download the app** — [latest release](https://github.com/TheOddjobShop/barakah/releases/latest).
 Open the `.dmg` and drag Barakah into Applications.
@@ -209,19 +210,111 @@ around the ways long-lived timers actually fail:
 Settings live in `~/Library/Application Support/Barakah/settings.json` as plain,
 readable JSON.
 
+## On Linux
+
+Barakah also runs on Linux, as a GNOME tray app built from `linux/` in this
+repository. The same `make` does the right thing on each system:
+
+```sh
+git clone https://github.com/TheOddjobShop/barakah.git
+cd barakah
+make
+```
+
+On Linux a bare `make` checks the dependencies, installs Barakah for your user
+under `~/.local` (no root needed), adds it to the app grid, and launches it. Look
+for the crescent in the top bar. `git pull && make` updates it; `make uninstall`
+removes it.
+
+It needs Python 3.9+, PyGObject, GTK 3, AyatanaAppIndicator and GStreamer — all
+already present on a stock Ubuntu desktop. If `make` reports something missing,
+it prints the exact package list; on Ubuntu or Debian that is:
+
+```sh
+sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 \
+  gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad libnotify-bin gir1.2-geoclue-2.0 gir1.2-gweather-4.0
+```
+
+On GNOME the tray icon needs the AppIndicator extension, which Ubuntu enables by
+default; KDE, XFCE, Cinnamon and Budgie show tray icons natively.
+
+### Why it is built the way it is
+
+The Linux build is a Python app on PyGObject rather than a Swift one. Swift's
+toolchain is a large install on Linux and SwiftUI does not exist there, so the
+interface would have had to be rewritten anyway. What Linux desktops already
+ship is Python with bindings to GTK, the tray, GStreamer and D-Bus. So Barakah
+installs with nothing to compile and no new packages on a stock Ubuntu desktop,
+and each macOS piece maps onto the thing a Linux desktop already uses for it:
+
+| macOS | Linux |
+|---|---|
+| Menu bar item and popover | AppIndicator tray icon; its menu is the day view |
+| adhan-swift | [`linux/barakah/adhan.py`](linux/barakah/adhan.py), a line-for-line port of adhan-swift 1.5.0 |
+| CoreLocation | GeoClue (GNOME's location service); cities and place names from libgweather's offline database |
+| Scheduled user notifications | A systemd user timer per notification, running `notify-send` |
+| Now Playing and Apple Events | MPRIS over D-Bus, explicit `Pause` only |
+| CoreAudio output mute | PipeWire: mutes every *other* app's stream, so the athan stays audible |
+| AVAudioPlayer | GStreamer `playbin` |
+| Login item | `~/.config/autostart` entry |
+| Umm al-Qura calendar | the system's ICU, which is what Foundation uses underneath |
+
+**The times are the same to the second.** The port is checked against the Swift
+engine itself: `Tests/BarakahTests/LinuxParityTests.swift` runs the macOS app's
+`PrayerTimeEngine` over thirteen places, every method, both madhhabs, all
+high-latitude rules and eight dates (solstices, both DST changes, polar days),
+plus fully configured settings files with iqama rules and Jumu'ah, and writes
+the results to `linux/tests/parity.json`. The Linux tests must reproduce that
+file exactly, and the Swift test fails if the engine drifts from it.
+
+Settings are the same JSON file, in the same format, at
+`~/.config/barakah/settings.json` — a settings file copied from a Mac works
+unchanged. Your own recordings go in `~/.local/share/barakah/Athan/`.
+
+### What is different on Linux
+
+- **Stopping the athan takes two clicks, not one.** GNOME always opens a tray
+  icon's menu on click, so "Stop athan" is the first item in that menu. The
+  floating athan panel has a Stop button too, and needs no menu at all.
+- **Automatic location needs Location Services on.** GeoClue honours
+  *Settings → Privacy → Location*. With it off, Barakah says so and uses the
+  last known place; search for your city or enter coordinates in
+  *Settings → Location* instead. City search is offline.
+- **Notifications survive a quit, not a logout.** Timers belong to your user
+  session, so they keep firing if Barakah quits or crashes, and are recreated
+  when it next starts.
+- **"Pause and mute" mutes other apps, not the speakers.** Muting the output
+  device on Linux would silence the athan too; muting each other stream does
+  what the Mac's device mute is for.
+- **Audio activity is honest.** MPRIS players report whether they are really
+  playing, so Barakah always knows what it paused and resumes exactly that.
+
+A few commands help on a machine you reach over ssh:
+
+```sh
+barakah --times              # today's schedule from your settings
+barakah --test-athan maghrib # the athan moment now: pause, play, panel
+barakah --settings location  # open Settings at a tab
+```
+
 ## Development
 
 ```sh
 make          # build, install, and run — the whole path
 make build    # compile only
-make test     # run the test suite
+make test     # run the test suite (Swift, then the Linux port's Python tests)
 make update   # stop, wipe stale grants, rebuild, reinstall, relaunch
 make dmg      # package a universal disk image
 make clean
 ```
 
+On Linux the same names do the same jobs for the tray app — `make`, `make build`
+(check dependencies and stage), `make install`, `make update`, `make test`,
+plus `make uninstall`.
+
 The code is Swift 6 and SwiftUI, no Xcode project — SwiftPM builds the binary
-and the Makefile assembles the `.app`.
+and the Makefile assembles the `.app`. The Linux app is Python 3 on PyGObject.
 
 ```
 Sources/Barakah/
@@ -229,6 +322,18 @@ Sources/Barakah/
 ├── Services/   Time calculation, scheduling, audio, location, notifications
 ├── Media/      The three pause strategies and the controller that layers them
 └── UI/         Menu bar, panel, athan window, settings
+linux/
+├── barakah/    The Linux app: adhan port, engine, scheduler, tray, settings
+├── data/       Tray icons, launcher and .desktop templates
+├── tests/      parity.json (written by the Swift tests) and the Python tests
+└── Makefile.linux
+```
+
+After a deliberate change to the calculation, regenerate the parity fixture
+from the Swift engine and commit it with the change:
+
+```sh
+BARAKAH_WRITE_PARITY=1 swift test --filter LinuxParity
 ```
 
 The interesting seams are [`Scheduler.swift`](Sources/Barakah/Services/Scheduler.swift)

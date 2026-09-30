@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Barakah
+GenericName=Prayer Times
+Comment=Prayer times, iqama reminders, and media that actually stops
+Exec=@LAUNCHER@
+Icon=dev.justin06lee.barakah
+Terminal=false
+Categories=Utility;Clock;
+Keywords=prayer;salah;salat;athan;adhan;azan;iqama;namaz;islam;muslim;
+StartupNotify=false
+X-GNOME-UsesNotifications=true
+Actions=settings;
+
+[Desktop Action settings]
+Name=Settings
+Exec=@LAUNCHER@ --settings
