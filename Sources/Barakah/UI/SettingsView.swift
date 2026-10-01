@@ -1,7 +1,7 @@
 import SwiftUI
 import Adhan
 
-/// The settings window: six tabs, each answering one question the user actually
+/// The settings window: seven tabs, each answering one question the user actually
 /// has. Grouped by *what they want to change* rather than by which subsystem
 /// implements it.
 struct SettingsView: View {
@@ -19,10 +19,12 @@ struct SettingsView: View {
                 .tabItem { Label("Athan", systemImage: "speaker.wave.2") }
             MediaSettingsView(app: app)
                 .tabItem { Label("Media", systemImage: "pause.rectangle") }
+            LockSettingsView(app: app)
+                .tabItem { Label("Lock", systemImage: "lock") }
             GeneralSettingsView(app: app)
                 .tabItem { Label("General", systemImage: "gearshape") }
         }
-        .frame(width: 520, height: 460)
+        .frame(width: 560, height: 460)
     }
 }
 

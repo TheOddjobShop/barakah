@@ -309,6 +309,75 @@ class PrayerConfig:
         )
 
 
+# MARK: - Prayer lock
+
+DEFAULT_LOCK_GRACE_MINUTES = 15
+
+
+@dataclass(frozen=True)
+class LockRule:
+    """Whether a prayer locks the screen, and how many minutes after its athan."""
+    enabled: bool = True
+    grace_minutes: int = DEFAULT_LOCK_GRACE_MINUTES
+
+    def to_json(self) -> dict:
+        return {"enabled": self.enabled, "graceMinutes": self.grace_minutes}
+
+    @classmethod
+    def from_json(cls, value: Any) -> "LockRule":
+        if not isinstance(value, dict):
+            return cls()
+        try:
+            grace = int(value.get("graceMinutes", DEFAULT_LOCK_GRACE_MINUTES))
+        except (TypeError, ValueError):
+            grace = DEFAULT_LOCK_GRACE_MINUTES
+        return cls(bool(value.get("enabled", True)), max(0, grace))
+
+
+@dataclass
+class PrayerLockSettings:
+    """The prayer lock: once a prayer's grace period has passed, the screen is
+    covered until the user swears they prayed it or the prayer's time ends.
+
+    Stored under its own key, which a settings file from before the lock
+    existed simply lacks — the Swift side decodes it as an Optional for the
+    same reason."""
+    enabled: bool = False
+    rules: dict = field(default_factory=lambda: {k: LockRule() for k in PRAYERS})
+
+    def rule(self, kind: str) -> LockRule:
+        return self.rules.get(kind) or LockRule()
+
+    def to_json(self) -> dict:
+        return {"enabled": self.enabled, "rules": {k: self.rule(k).to_json() for k in PRAYERS}}
+
+    @classmethod
+    def from_json(cls, value: Any) -> Optional["PrayerLockSettings"]:
+        if not isinstance(value, dict):
+            return None
+        rules = value.get("rules") if isinstance(value.get("rules"), dict) else {}
+        return cls(bool(value.get("enabled", False)), {k: LockRule.from_json(rules.get(k)) for k in PRAYERS})
+
+
+# MARK: - Tracker widget
+
+@dataclass
+class TrackerWidgetSettings:
+    """The prayer heatmap on the desktop. Where it sits is not a setting:
+    screen coordinates mean nothing on another machine, so each platform keeps
+    its widget's position to itself."""
+    enabled: bool = False
+
+    def to_json(self) -> dict:
+        return {"enabled": self.enabled}
+
+    @classmethod
+    def from_json(cls, value: Any) -> Optional["TrackerWidgetSettings"]:
+        if not isinstance(value, dict):
+            return None
+        return cls(bool(value.get("enabled", False)))
+
+
 # MARK: - Labels
 
 METHOD_LABELS = {
@@ -416,6 +485,11 @@ class SettingsData:
     show_sunrise: bool = True
     launch_at_login: bool = False
     has_completed_onboarding: bool = False
+    # Prayer lock. None until first configured, so the key is absent from a
+    # fresh settings file exactly as it is on the Mac.
+    prayer_lock: Optional[PrayerLockSettings] = None
+    # The heatmap on the desktop; None until first configured, like the lock.
+    tracker_widget: Optional[TrackerWidgetSettings] = None
     # Keys written by another build that this one does not model.
     extra: dict = field(default_factory=dict)
 
@@ -459,6 +533,14 @@ class SettingsData:
             return self.fajr_athan_sound
         return self.athan_sound
 
+    @property
+    def lock(self) -> PrayerLockSettings:
+        return self.prayer_lock or PrayerLockSettings()
+
+    @property
+    def widget(self) -> TrackerWidgetSettings:
+        return self.tracker_widget or TrackerWidgetSettings()
+
     # MARK: JSON
 
     def to_json(self) -> dict:
@@ -487,6 +569,14 @@ class SettingsData:
             out.pop("fajrAthanSound", None)
         out["resumeMode"] = self.resume_mode.to_json()
         out["mediaExcludedBundleIDs"] = list(self.media_excluded_bundle_ids)
+        if self.prayer_lock is not None:
+            out["prayerLock"] = self.prayer_lock.to_json()
+        else:
+            out.pop("prayerLock", None)
+        if self.tracker_widget is not None:
+            out["trackerWidget"] = self.tracker_widget.to_json()
+        else:
+            out.pop("trackerWidget", None)
         return out
 
     @classmethod
@@ -497,7 +587,7 @@ class SettingsData:
         known = set(_FIELDS) | {
             "manualPlace", "resolvedPlace", "highLatitudeRule", "prayerConfigs",
             "jumuahIqamaRule", "athanSound", "fajrAthanSound", "resumeMode",
-            "mediaExcludedBundleIDs",
+            "mediaExcludedBundleIDs", "prayerLock", "trackerWidget",
         }
         s.extra = {k: v for k, v in data.items() if k not in known}
         for key, (attr, kind) in _FIELDS.items():
@@ -532,4 +622,6 @@ class SettingsData:
         s.resume_mode = MediaResumeMode.from_json(data.get("resumeMode"))
         excluded = data.get("mediaExcludedBundleIDs")
         s.media_excluded_bundle_ids = [str(x) for x in excluded] if isinstance(excluded, list) else []
+        s.prayer_lock = PrayerLockSettings.from_json(data.get("prayerLock"))
+        s.tracker_widget = TrackerWidgetSettings.from_json(data.get("trackerWidget"))
         return s

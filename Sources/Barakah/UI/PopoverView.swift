@@ -5,6 +5,7 @@ import SwiftUI
 struct PopoverView: View {
     @Bindable var app: AppState
     var onOpenSettings: () -> Void
+    var onOpenTracker: () -> Void
     var onQuit: () -> Void
 
     private var formatter: PrayerFormatter {
@@ -21,6 +22,7 @@ struct PopoverView: View {
             header
             Divider().opacity(0.5)
             prayerList
+            oathBar
             Divider().opacity(0.5)
             footer
         }
@@ -162,6 +164,7 @@ struct PopoverView: View {
                         formatter: formatter,
                         state: state(for: prayer, in: today),
                         isMuted: app.isMutedToday(prayer.kind),
+                        recordedStatus: recordedStatus(for: prayer, in: today),
                         onToggleMute: { app.toggleMuteToday(prayer.kind) }
                     )
                 }
@@ -185,6 +188,45 @@ struct PopoverView: View {
             return day.currentPrayer(at: now)?.kind == prayer.kind ? .current : .past
         }
         return .upcoming
+    }
+
+    /// What the log holds for this prayer today, if anything.
+    private func recordedStatus(for prayer: ScheduledPrayer, in day: DaySchedule) -> PrayerStatus? {
+        guard prayer.kind.isPrayer else { return nil }
+        let key = PrayerLog.dayKey(day.day, in: app.settings.activePlace.timeZone)
+        return app.prayerLog.log.entry(day: key, kind: prayer.kind)?.status
+    }
+
+    // MARK: - Oath
+
+    /// "I prayed Dhuhr" while Dhuhr's time is open and nothing is recorded —
+    /// confirming early is what keeps the lock from ever appearing. Ticks so
+    /// it appears when a window opens with the panel already showing.
+    private var oathBar: some View {
+        TimelineView(.periodic(from: .now, by: 20)) { _ in
+            if let window = app.currentWindow,
+               app.prayerLog.log.entry(day: window.day, kind: window.kind) == nil {
+                HStack(spacing: 8) {
+                    if app.settings.lock.enabled,
+                       app.lock.nextWindow == window,
+                       let locksAt = app.lock.nextAt {
+                        Label("Locks at \(formatter.time(locksAt))", systemImage: "lock")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                    Button("I prayed \(window.kind.name)", systemImage: "checkmark") {
+                        app.confirmPrayed(window)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent(for: window.kind))
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
+        }
     }
 
     // MARK: - Footer
@@ -239,6 +281,10 @@ struct PopoverView: View {
                 .fixedSize()
 
                 Spacer()
+
+                Button("Prayer tracker…", systemImage: "checklist") { onOpenTracker() }
+                    .labelStyle(.iconOnly)
+                    .help("Prayer tracker")
 
                 Button("Settings…", systemImage: "gearshape") { onOpenSettings() }
                     .labelStyle(.iconOnly)

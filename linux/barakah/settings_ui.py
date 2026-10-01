@@ -16,7 +16,7 @@ from .audio import AthanLibrary  # noqa: E402
 from .model import (  # noqa: E402
     HIGH_LATITUDE_LABELS, MADHAB_DESCRIPTIONS, MADHAB_LABELS, MEDIA_PAUSE_LABELS, MEDIA_PAUSE_MODES,
     MENU_BAR_STYLE_LABELS, MENU_BAR_STYLES, METHOD_LABELS, NAMES, PRAYER_KINDS, PRAYERS, SELECTABLE_METHODS,
-    AthanSound, IqamaRule, MediaResumeMode, PlaceSetting, SettingsData,
+    AthanSound, IqamaRule, LockRule, MediaResumeMode, PlaceSetting, PrayerLockSettings, SettingsData,
 )
 
 
@@ -98,7 +98,7 @@ class SettingsWindow(Gtk.Window):
     def update_config(self, kind: str, mutate) -> None:
         self.app.update_config(kind, mutate)
 
-    TABS = ("location", "calculation", "iqama", "athan", "media", "general")
+    TABS = ("location", "calculation", "iqama", "athan", "media", "lock", "general")
 
     def show_tab(self, name: str) -> None:
         if name in self.TABS:
@@ -111,7 +111,7 @@ class SettingsWindow(Gtk.Window):
         self.notebook = Gtk.Notebook()
         for title, build in (("Location", self._location), ("Calculation", self._calculation),
                              ("Iqama", self._iqama), ("Athan", self._athan),
-                             ("Media", self._media), ("General", self._general)):
+                             ("Media", self._media), ("Lock", self._lock), ("General", self._general)):
             self.notebook.append_page(_scrolled(build()), Gtk.Label(label=title))
         self.add(self.notebook)
         self.notebook.show_all()
@@ -499,6 +499,65 @@ class SettingsWindow(Gtk.Window):
             buttons.pack_start(b, False, False, 0)
         box.pack_start(report, False, False, 0)
         box.pack_start(buttons, False, False, 0)
+        return box
+
+    # MARK: - Prayer lock
+
+    def update_lock(self, mutate: Callable[[PrayerLockSettings], None]) -> None:
+        def apply(s: SettingsData) -> None:
+            lock = s.lock
+            mutate(lock)
+            s.prayer_lock = lock
+        self.update(apply)
+
+    def _lock(self) -> Gtk.Box:
+        box = _page()
+        lock = self.s.lock
+        box.pack_start(_check("Lock the screen at prayer times", lock.enabled,
+                              lambda v: self.update_lock(lambda l: setattr(l, "enabled", v))), False, False, 0)
+        box.pack_start(_note(
+            "Once a prayer's grace period has passed, every screen is covered until you click "
+            "“Wallahi, I prayed …”, or until the prayer's time ends. Confirming from the top bar "
+            "before then means it never appears."), False, False, 0)
+
+        box.pack_start(_heading("Grace period, in minutes after the athan"), False, False, 0)
+        grid = Gtk.Grid(column_spacing=16, row_spacing=6)
+        for row, kind in enumerate(PRAYERS):
+            rule = lock.rule(kind)
+
+            def set_rule(kind=kind, **change):
+                def apply(l: PrayerLockSettings) -> None:
+                    current = l.rule(kind)
+                    l.rules[kind] = LockRule(change.get("enabled", current.enabled),
+                                             change.get("grace_minutes", current.grace_minutes))
+                self.update_lock(apply)
+
+            grid.attach(_check(NAMES[kind], rule.enabled, lambda v, f=set_rule: f(enabled=v)), 0, row, 1, 1)
+            spin = _spin(rule.grace_minutes, 0, 120, lambda v, f=set_rule: f(grace_minutes=v))
+            grid.attach(spin, 1, row, 1, 1)
+        box.pack_start(grid, False, False, 0)
+
+        box.pack_start(_heading("See it"), False, False, 0)
+        preview = Gtk.Button(label="Preview the lock")
+        preview.set_halign(Gtk.Align.START)
+        preview.connect("clicked", lambda *_: self.get_application().activate_action("preview-lock", None))
+        box.pack_start(preview, False, False, 0)
+        box.pack_start(_note("The preview records nothing and lifts by itself after a minute."), False, False, 0)
+
+        box.pack_start(_heading("Tracker"), False, False, 0)
+
+        def set_widget(v: bool) -> None:
+            def apply(s: SettingsData) -> None:
+                widget = s.widget
+                widget.enabled = v
+                s.tracker_widget = widget
+            self.update(apply)
+        box.pack_start(_check("Show the prayer heatmap on the desktop", self.s.widget.enabled, set_widget),
+                       False, False, 0)
+        tracker_button = Gtk.Button(label="Open the prayer tracker")
+        tracker_button.set_halign(Gtk.Align.START)
+        tracker_button.connect("clicked", lambda *_: self.get_application().activate_action("tracker", None))
+        box.pack_start(tracker_button, False, False, 0)
         return box
 
     # MARK: - General

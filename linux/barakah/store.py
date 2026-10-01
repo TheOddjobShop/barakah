@@ -9,12 +9,14 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Callable
+import time
+from typing import Callable, Optional
 
 from gi.repository import GLib
 
 from . import paths
 from .model import SettingsData
+from .tracker import PrayerLog
 
 log = logging.getLogger("barakah.settings")
 
@@ -100,3 +102,52 @@ class SettingsStore:
             os.replace(tmp, self.path)
         except OSError as error:
             log.error("failed to save settings: %s", error)
+
+
+class PrayerLogStore:
+    """Owns the prayer log. Each record is written at once rather than
+    debounced: they come a few times a day, and an oath lost to a crash is
+    a lock that comes back."""
+
+    def __init__(self, path: Optional[str] = None):
+        self.path = path or paths.prayer_log_file()
+        self.log = self._load()
+
+    def _load(self) -> PrayerLog:
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                return PrayerLog.from_json(json.loads(fh.read()))
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            # Unreadable is not absent: never overwrite it.
+            log.error("prayer log unreadable: %s", error)
+            return PrayerLog(since=time.time())
+        except (ValueError, TypeError) as error:
+            log.error("prayer log unreadable, starting a new one: %s", error)
+            try:
+                os.replace(self.path, os.path.splitext(self.path)[0] + ".corrupt.json")
+            except OSError:
+                return PrayerLog(since=time.time())
+        # Tracking starts now: earlier prayers are untracked, not missed.
+        self.log = PrayerLog(since=time.time())
+        self.save()
+        return self.log
+
+    def record(self, day: str, kind: str, status: str, at: Optional[float] = None) -> None:
+        self.log.record(day, kind, status, time.time() if at is None else at)
+        self.save()
+
+    def clear(self, day: str, kind: str) -> None:
+        self.log.clear(day, kind)
+        self.save()
+
+    def save(self) -> None:
+        tmp = self.path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(self.log.to_json(), fh, indent=2, sort_keys=True)
+                fh.write("\n")
+            os.replace(tmp, self.path)
+        except OSError as error:
+            log.error("failed to save the prayer log: %s", error)

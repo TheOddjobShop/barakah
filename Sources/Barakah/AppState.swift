@@ -18,6 +18,8 @@ public final class AppState {
     public let media: MediaController
     public let notifications: NotificationService
     public let location: LocationService
+    /// What the user has sworn they prayed, kept for the tracker and the lock.
+    public let prayerLog: PrayerLogStore
 
     /// Prayers the user has silenced, each mapped to the day it was silenced
     /// for.
@@ -31,10 +33,36 @@ public final class AppState {
     public private(set) var mutedUntil: Date?
     /// Description of the media Barakah paused, shown in the athan window.
     public private(set) var interruptionSummary: String?
+    /// The prayer lock, re-derived every couple of seconds and after anything
+    /// that could change it. It is state, not an event: asking often is what
+    /// makes a restart, a wake or a clock change bring it back. Independent of
+    /// athan muting, which silences sound only.
+    public private(set) var lock: LockState = LockState()
+
+    /// Posted whenever the lock starts, ends or moves to another prayer, so
+    /// the overlay appears on the instant rather than on the next refresh.
+    public static let lockChanged = Notification.Name("dev.justin06lee.barakah.lockChanged")
+    /// Posted when the desktop widget's settings change, so it appears or goes
+    /// on the instant rather than on the menu bar's next refresh.
+    public static let widgetChanged = Notification.Name("dev.justin06lee.barakah.widgetChanged")
+    /// How often the lock is re-derived.
+    private static let lockCheckInterval: TimeInterval = 2
+    /// The window the lock preview is showing, if one is up. A preview records
+    /// nothing, pauses nothing and does not block quitting.
+    public private(set) var lockPreview: PrayerWindow?
+    /// How long a preview stays up unless closed.
+    private static let previewSeconds: TimeInterval = 60
+    /// Set when an athan's resume came due while the lock was up. The lock
+    /// keeps media paused, so the resume waits for the lock to lift.
+    public private(set) var resumeDeferredByLock: Bool = false
 
     private var resumeTask: Task<Void, Never>?
     private var notificationTask: Task<Void, Never>?
     private var dayObserver: Any?
+    private var lockTimer: Timer?
+    private var lockPauseTask: Task<Void, Never>?
+    private var previewTask: Task<Void, Never>?
+    private let engine = PrayerTimeEngine()
     private let log = Logger(subsystem: Barakah.subsystem, category: "app")
 
     public var settings: SettingsData { settingsStore.data }
@@ -47,12 +75,13 @@ public final class AppState {
         return calendar.startOfDay(for: Date())
     }
 
-    public init(settingsStore: SettingsStore? = nil) {
+    public init(settingsStore: SettingsStore? = nil, prayerLog: PrayerLogStore? = nil) {
         // Constructed here rather than as a default argument: default argument
         // expressions are evaluated outside the actor, and the store is
         // main-actor isolated.
         let store = settingsStore ?? SettingsStore()
         self.settingsStore = store
+        self.prayerLog = prayerLog ?? PrayerLogStore()
         self.scheduler = Scheduler(settings: store.data)
         self.audio = AudioService()
         self.media = MediaController()
@@ -68,6 +97,11 @@ public final class AppState {
     public func start() async {
         // A previous run may have died mid-athan with the output muted.
         OutputMuter.shared.recoverIfNeeded()
+
+        // Before anything that awaits: a lock that was due while the app was
+        // not running must come back at launch, not after a permission prompt.
+        checkLock()
+        startLockChecks()
 
         // The notification horizon is only three days long, so something has to
         // roll it forward or reminders silently stop on a machine that simply
@@ -93,8 +127,12 @@ public final class AppState {
 
     /// Apply a settings mutation and propagate it everywhere it matters.
     public func updateSettings(_ mutate: (inout SettingsData) -> Void) {
+        let widgetBefore = settings.widget
         settingsStore.update(mutate)
         propagateSettingsChange()
+        if settings.widget != widgetBefore {
+            NotificationCenter.default.post(name: Self.widgetChanged, object: nil)
+        }
     }
 
     public func updateConfig(for kind: PrayerKind, _ mutate: (inout PrayerConfig) -> Void) {
@@ -105,6 +143,7 @@ public final class AppState {
     private func propagateSettingsChange() {
         scheduler.update(settings: settings)
         refreshNotifications(force: true)
+        checkLock()
         if settings.locationMode == .automatic, location.isAuthorized {
             location.refresh()
         }
@@ -185,6 +224,9 @@ public final class AppState {
         let config = settings.config(for: prayer)
         resumeTask?.cancel()
         resumeTask = nil
+        // A new athan supersedes a resume the lock was holding back; resuming
+        // it later would undo this athan's own pause.
+        resumeDeferredByLock = false
 
         // Media is silenced *before* the adhan starts, so the two never overlap.
         if config.mediaMode.pausesPlayers || config.mediaMode.mutesOutput {
@@ -233,7 +275,7 @@ public final class AppState {
             if silentAthanLength > 0 {
                 scheduleResume(after: silentAthanLength)
             } else {
-                Task { await media.resume(); interruptionSummary = nil }
+                Task { await resumeUnlessLocked() }
             }
 
         case .afterMinutes(let minutes):
@@ -253,15 +295,28 @@ public final class AppState {
         resumeTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(max(0, delay)))
             guard !Task.isCancelled else { return }
-            await self?.media.resume()
-            self?.interruptionSummary = nil
+            await self?.resumeUnlessLocked()
         }
     }
 
-    /// Give the user their media back right now, regardless of policy.
+    /// The athan's resume, unless the prayer lock is up: then it is deferred
+    /// until the lock lifts, and the interruption record is kept.
+    private func resumeUnlessLocked() async {
+        if lock.active != nil {
+            resumeDeferredByLock = true
+            log.info("media resume deferred by the prayer lock")
+            return
+        }
+        await media.resume()
+        interruptionSummary = nil
+    }
+
+    /// Give the user their media back right now, regardless of policy — and of
+    /// the lock, though while it is up the next check pauses it again.
     public func resumeMediaNow() {
         resumeTask?.cancel()
         resumeTask = nil
+        resumeDeferredByLock = false
         Task { await media.resume(); interruptionSummary = nil }
     }
 
@@ -295,6 +350,152 @@ public final class AppState {
 
     public func isSuppressed(_ prayer: PrayerKind) -> Bool {
         isGloballyMuted || isMutedToday(prayer)
+    }
+
+    // MARK: - Prayer tracker and lock
+
+    private func startLockChecks() {
+        lockTimer?.invalidate()
+        let timer = Timer(timeInterval: Self.lockCheckInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkLock() }
+        }
+        timer.tolerance = 0.5
+        RunLoop.main.add(timer, forMode: .common)
+        lockTimer = timer
+    }
+
+    public func stopLockChecks() {
+        lockTimer?.invalidate()
+        lockTimer = nil
+    }
+
+    /// Re-derive the lock for this instant, and while it is up keep every
+    /// player paused.
+    public func checkLock() {
+        let state = PrayerTracker.lockState(now: Date(), settings: settings, log: prayerLog.log, engine: engine)
+        if state != lock {
+            let wasActive = lock.active != nil
+            let activeChanged = state.active != lock.active
+            if activeChanged {
+                let description = state.active.map { "on for \($0.kind.name)" } ?? "off"
+                log.info("prayer lock \(description, privacy: .public)")
+            }
+            lock = state
+            // The real lock takes over from a preview.
+            if state.active != nil, lockPreview != nil {
+                previewTask?.cancel()
+                previewTask = nil
+                lockPreview = nil
+            }
+            if activeChanged {
+                NotificationCenter.default.post(name: Self.lockChanged, object: nil)
+            }
+            if wasActive, state.active == nil {
+                lockLifted()
+            }
+        }
+        if lock.active != nil {
+            pauseMediaForLock()
+        }
+    }
+
+    /// One pass at a time: an Apple Event to a hung player can outlast the
+    /// two-second tick, and passes must not pile up behind it.
+    private func pauseMediaForLock() {
+        guard lockPauseTask == nil else { return }
+        let snapshot = settings
+        lockPauseTask = Task { [weak self] in
+            guard let self else { return }
+            let paused = await self.media.pausePlaying(settings: snapshot)
+            if paused > 0 {
+                self.interruptionSummary = self.media.active?.summary
+            }
+            self.lockPauseTask = nil
+        }
+    }
+
+    /// Media the lock paused stays paused; only a resume the lock held back
+    /// is carried out now.
+    private func lockLifted() {
+        guard resumeDeferredByLock else { return }
+        resumeDeferredByLock = false
+        let pending = lockPauseTask
+        Task { [weak self] in
+            // Let a pause pass still in flight land first, or it could record
+            // a fresh interruption after this resume.
+            await pending?.value
+            guard let self, self.lock.active == nil else { return }
+            await self.media.resume()
+            self.interruptionSummary = nil
+        }
+    }
+
+    /// Show the cover as it will look, for the prayer whose time it is (or the
+    /// next one today), recording nothing. Refused while the real lock is up;
+    /// lifts by itself after a minute.
+    public func previewLock() {
+        guard lock.active == nil, lockPreview == nil else { return }
+        let now = Date()
+        let found = currentWindow
+            ?? PrayerTracker.windows(for: now, settings: settings, engine: engine).first(where: { $0.start > now })
+        guard let window = found else { return }
+        lockPreview = window
+        NotificationCenter.default.post(name: Self.lockChanged, object: nil)
+        previewTask?.cancel()
+        previewTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(AppState.previewSeconds))
+            guard !Task.isCancelled else { return }
+            self?.endLockPreview()
+        }
+    }
+
+    public func endLockPreview() {
+        previewTask?.cancel()
+        previewTask = nil
+        guard lockPreview != nil else { return }
+        lockPreview = nil
+        NotificationCenter.default.post(name: Self.lockChanged, object: nil)
+    }
+
+    /// The prayer whose time it is now, if any.
+    public var currentWindow: PrayerWindow? {
+        PrayerTracker.window(at: Date(), settings: settings, engine: engine)
+    }
+
+    public func status(of window: PrayerWindow) -> PrayerStatus {
+        PrayerTracker.status(of: window, in: prayerLog.log, now: Date())
+    }
+
+    /// The oath. Inside the window it is on time; after it, qada.
+    public func confirmPrayed(_ window: PrayerWindow) {
+        let now = Date()
+        prayerLog.record(
+            day: window.day, kind: window.kind,
+            status: PrayerTracker.statusForRecord(window, now: now), at: now)
+        checkLock()
+    }
+
+    /// Correct the record from the tracker: qada, excused, or cleared.
+    public func setStatus(day: String, prayer: PrayerKind, status: PrayerStatus?) {
+        if let status {
+            prayerLog.record(day: day, kind: prayer, status: status)
+        } else {
+            prayerLog.clear(day: day, kind: prayer)
+        }
+        checkLock()
+    }
+
+    public func history(days: Int) -> [DayRecord] {
+        PrayerTracker.history(log: prayerLog.log, settings: settings, now: Date(), days: days, engine: engine)
+    }
+
+    public func updateLock(_ mutate: (inout PrayerLockSettings) -> Void) {
+        updateSettings { $0.updateLock(mutate) }
+    }
+
+    /// Show or hide the prayer heatmap on the desktop.
+    public func updateWidget(_ mutate: (inout TrackerWidgetSettings) -> Void) {
+        updateSettings { $0.updateWidget(mutate) }
     }
 
     // MARK: - Derived display state
