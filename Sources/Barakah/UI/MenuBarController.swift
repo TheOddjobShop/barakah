@@ -17,8 +17,13 @@ final class MenuBarController: NSObject {
     private var refreshTimer: Timer?
     private var athanWindow: AthanWindowController?
     private var playbackObserver: Any?
+    private var lockOverlay: LockOverlayController?
+    private var lockObserver: Any?
+    private var trackerWidget: TrackerWidgetController?
+    private var widgetObserver: Any?
 
     var onOpenSettings: (() -> Void)?
+    var onOpenTracker: (() -> Void)?
 
     init(app: AppState) {
         self.app = app
@@ -37,6 +42,21 @@ final class MenuBarController: NSObject {
             MainActor.assumeIsolated { self?.refresh() }
         }
 
+        // Likewise the prayer lock: it covers the screen the moment it is due
+        // and lifts the moment the oath is given.
+        lockObserver = NotificationCenter.default.addObserver(
+            forName: AppState.lockChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncLockOverlay() }
+        }
+
+        // And the desktop heatmap, the moment its setting is flipped.
+        widgetObserver = NotificationCenter.default.addObserver(
+            forName: AppState.widgetChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncTrackerWidget() }
+        }
+
         refresh()
     }
 
@@ -51,6 +71,10 @@ final class MenuBarController: NSObject {
                 onOpenSettings: { [weak self] in
                     self?.closePanel()
                     self?.onOpenSettings?()
+                },
+                onOpenTracker: { [weak self] in
+                    self?.closePanel()
+                    self?.onOpenTracker?()
                 },
                 onQuit: { NSApp.terminate(nil) }
             )
@@ -100,6 +124,8 @@ final class MenuBarController: NSObject {
         // Presence of the athan window is driven from here so it tracks playback
         // regardless of which code path started or stopped it.
         syncAthanWindow(isPlaying: playing)
+        syncLockOverlay()
+        syncTrackerWidget()
     }
 
     private func label() -> String {
@@ -207,6 +233,8 @@ final class MenuBarController: NSObject {
         menu.addItem(silence)
 
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Prayer tracker…", action: #selector(menuTracker), keyEquivalent: "")
+            .target = self
         menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",")
             .target = self
         menu.addItem(withTitle: "Quit Barakah", action: #selector(menuQuit), keyEquivalent: "q")
@@ -226,6 +254,7 @@ final class MenuBarController: NSObject {
         refresh()
     }
     @objc private func menuSettings() { onOpenSettings?() }
+    @objc private func menuTracker() { onOpenTracker?() }
     @objc private func menuQuit() { NSApp.terminate(nil) }
 
     // MARK: - Athan window
@@ -247,11 +276,69 @@ final class MenuBarController: NSObject {
         }
     }
 
+    // MARK: - Prayer lock
+
+    /// Driven from `AppState.lock` and `AppState.lockPreview` alone, on their
+    /// change notification and on every refresh, so it tracks them whichever
+    /// path changed them. The real lock wins over a preview.
+    private func syncLockOverlay() {
+        let shown: (window: PrayerWindow, preview: Bool)?
+        if let window = app.lock.active {
+            shown = (window, false)
+        } else if let window = app.lockPreview {
+            shown = (window, true)
+        } else {
+            shown = nil
+        }
+
+        if let shown {
+            if lockOverlay == nil {
+                lockOverlay = LockOverlayController(app: app)
+            }
+            if popover.isShown { closePanel() }
+            lockOverlay?.show(for: shown.window, preview: shown.preview)
+        } else if let overlay = lockOverlay {
+            overlay.hide()
+            lockOverlay = nil
+        }
+    }
+
+    // MARK: - Desktop widget
+
+    /// Driven from `settings.widget.enabled` alone, on its change
+    /// notification and on every refresh — so it is up at launch when it was
+    /// left on.
+    private func syncTrackerWidget() {
+        if app.settings.widget.enabled {
+            guard trackerWidget == nil else { return }
+            let widget = TrackerWidgetController(app: app) { [weak self] in
+                self?.onOpenTracker?()
+            }
+            trackerWidget = widget
+            widget.show()
+        } else if let widget = trackerWidget {
+            widget.close()
+            trackerWidget = nil
+        }
+    }
+
     func invalidate() {
         if let playbackObserver {
             NotificationCenter.default.removeObserver(playbackObserver)
             self.playbackObserver = nil
         }
+        if let lockObserver {
+            NotificationCenter.default.removeObserver(lockObserver)
+            self.lockObserver = nil
+        }
+        if let widgetObserver {
+            NotificationCenter.default.removeObserver(widgetObserver)
+            self.widgetObserver = nil
+        }
+        trackerWidget?.close()
+        trackerWidget = nil
+        lockOverlay?.hide()
+        lockOverlay = nil
         refreshTimer?.invalidate()
         refreshTimer = nil
         athanWindow?.close()

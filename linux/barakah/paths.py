@@ -31,6 +31,17 @@ def data_dir() -> str:
     return _ensure(os.path.join(_xdg("XDG_DATA_HOME", "~/.local/share"), "barakah"))
 
 
+def prayer_log_file() -> str:
+    """The prayer tracker's record: ~/.local/share/barakah/prayer-log.json.
+    Data rather than configuration, so it sits apart from settings.json."""
+    return os.path.join(data_dir(), "prayer-log.json")
+
+
+def widget_position_file() -> str:
+    """Where the desktop heatmap was last dragged to — machine state, not a setting."""
+    return os.path.join(state_dir(), "widget.json")
+
+
 def athan_dir() -> str:
     """Drop-in recordings: ~/.local/share/barakah/Athan."""
     return _ensure(os.path.join(data_dir(), "Athan"))

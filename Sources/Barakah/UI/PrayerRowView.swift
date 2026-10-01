@@ -10,6 +10,8 @@ struct PrayerRowView: View {
     let formatter: PrayerFormatter
     let state: RowState
     let isMuted: Bool
+    /// What the log holds for this prayer today; nil when nothing is recorded.
+    var recordedStatus: PrayerStatus? = nil
     var onToggleMute: () -> Void
 
     enum RowState {
@@ -47,6 +49,13 @@ struct PrayerRowView: View {
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
                     .help("Athan silenced for today")
+            }
+
+            if let recordedStatus {
+                Image(systemName: recordedStatus == .prayed ? "checkmark.circle.fill" : "checkmark.circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(recordedStatus == .prayed ? Color.green : Color.secondary)
+                    .help(recordedStatus.label)
             }
 
             Spacer(minLength: 8)
@@ -98,6 +107,7 @@ struct PrayerRowView: View {
         var parts = ["\(prayer.kind.name) at \(formatter.time(prayer.athan))"]
         if let iqama = prayer.iqama { parts.append("iqama at \(formatter.time(iqama))") }
         if isMuted { parts.append("silenced today") }
+        if let recordedStatus { parts.append(recordedStatus.label.lowercased()) }
         if state == .next { parts.append("next prayer") }
         return parts.joined(separator: ", ")
     }

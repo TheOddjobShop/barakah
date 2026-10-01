@@ -22,8 +22,15 @@ from gi.repository import AyatanaAppIndicator3 as AppIndicator  # noqa: E402
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from . import APP_ID, DISPLAY_NAME, paths  # noqa: E402
+from . import tracker  # noqa: E402
 from .formatting import PrayerFormatter  # noqa: E402
 from .model import ARABIC_NAMES, NAMES, is_prayer  # noqa: E402
+
+# How a recorded prayer reads at the end of its row.
+STATUS_MARKS = {
+    tracker.PRAYED: "✓ prayed", tracker.QADA: "✓ made up", tracker.EXCUSED: "excused",
+    tracker.MISSED: "missed",
+}
 
 ACCENTS = {
     "fajr": (0.36, 0.40, 0.72), "sunrise": (0.90, 0.58, 0.36), "dhuhr": (0.24, 0.60, 0.82),
@@ -40,10 +47,12 @@ def _item(label: str, action: Optional[Callable[[], None]] = None, sensitive: bo
 
 
 class Tray:
-    def __init__(self, app, open_settings: Callable[[], None], quit_app: Callable[[], None]):
+    def __init__(self, app, open_settings: Callable[[], None], quit_app: Callable[[], None],
+                 open_tracker: Callable[[], None]):
         self.app = app
         self.open_settings = open_settings
         self.quit_app = quit_app
+        self.open_tracker = open_tracker
         self.indicator = AppIndicator.Indicator.new(
             APP_ID, "barakah-tray-symbolic", AppIndicator.IndicatorCategory.APPLICATION_STATUS)
         self.indicator.set_icon_theme_path(paths.icons_dir())
@@ -53,6 +62,8 @@ class Tray:
         self.indicator.set_menu(self.menu)
         self._structure = None
         self._labels: dict[str, Gtk.MenuItem] = {}
+        self._window = None
+        self._statuses: dict[str, str] = {}
         self.athan_window: Optional[AthanWindow] = None
         app.subscribe(self.refresh)
         # Five seconds keeps a minute-resolution countdown honest at the
@@ -101,7 +112,14 @@ class Tray:
         app = self.app
         today = app.scheduler.today
         prayers = tuple(today.prayers) if today else ()
+        window = app.current_window
+        # Offer the oath for the prayer whose time it is, until it is recorded.
+        recorded = window is not None and app.prayer_log.log.entry(window.day, window.kind) is not None
+        self._window = window if window is not None and not recorded else None
+        records = app.history(1)
+        self._statuses = records[0].statuses if records else {}
         structure = (
+            self._window, app.settings.lock.enabled,
             app.audio.is_playing, app.media.active is not None, app.is_globally_muted,
             today.day if today else None, tuple(p.kind for p in prayers),
             tuple(app.is_muted_today(p.kind) for p in prayers),
@@ -130,6 +148,11 @@ class Tray:
             self._labels["summary"] = _item("", sensitive=False)
             add(self._labels["summary"])
             add(_item("Resume paused media", app.resume_media_now))
+        if self._window is not None:
+            window = self._window
+            add(Gtk.SeparatorMenuItem())
+            self._labels["oath"] = _item("", lambda: app.confirm_prayed(window))
+            add(self._labels["oath"])
         add(Gtk.SeparatorMenuItem())
 
         for prayer in prayers:
@@ -159,6 +182,7 @@ class Tray:
             sub.append(_item("Until tomorrow", lambda: app.mute(app.seconds_until_tomorrow())))
             silence.set_submenu(sub)
             add(silence)
+        add(_item("Prayer tracker…", self.open_tracker))
         add(_item("Settings…", self.open_settings))
         add(_item("Quit Barakah", self.quit_app))
         self.menu.show_all()
@@ -202,7 +226,17 @@ class Tray:
                 text += "   — now"
             if is_prayer(prayer.kind) and app.is_muted_today(prayer.kind):
                 text += "   (athan off today)"
+            mark = STATUS_MARKS.get(self._statuses.get(prayer.kind, ""))
+            if mark:
+                text += f"   {mark}"
             put(f"row-{prayer.kind}", text)
+
+        if self._window is not None:
+            oath = f"I prayed {NAMES[self._window.kind]}"
+            lock = app.lock
+            if lock.next_window == self._window and lock.next_at is not None:
+                oath += f"   (screen locks at {fmt.time(lock.next_at)})"
+            put("oath", oath)
 
         put("place", app.settings.active_place.name)
         date = fmt.gregorian_date(now)

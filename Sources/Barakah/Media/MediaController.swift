@@ -188,6 +188,106 @@ public final class MediaController {
         return interruption
     }
 
+    /// Pause whatever is playing right now and add it to the interruption in
+    /// effect, creating one if there is none. Called every couple of seconds
+    /// while the prayer lock is up.
+    ///
+    /// Unlike `interrupt`, this never resumes or replaces the existing record:
+    /// what an athan paused stays recorded alongside what the lock paused, so a
+    /// later resume puts both back. It never mutes output. Returns how many
+    /// things this pass paused.
+    @discardableResult
+    public func pausePlaying(settings: SettingsData) async -> Int {
+        let previous = inFlight
+        let task = Task { @MainActor [weak self] () -> MediaInterruption in
+            _ = await previous?.value
+            guard let self else { return MediaInterruption() }
+            return await self.performPausePlaying(settings: settings)
+        }
+        inFlight = task
+        let paused = await task.value
+        return paused.pausedPlayers.count + (paused.mediaRemoteStoppedAudio ? 1 : 0)
+    }
+
+    private func performPausePlaying(settings: SettingsData) async -> MediaInterruption {
+        var paused = MediaInterruption()
+        let excluded = Set(settings.mediaExcludedBundleIDs)
+
+        // Sampled first, as in performInterrupt, before anything is touched.
+        let allPlaying = AudioActivity.outputtingApplications()
+        let playing = allPlaying.filter { source in
+            guard let bundleID = source.bundleIdentifier else { return true }
+            return !excluded.contains(bundleID)
+        }
+        // This runs every two seconds for as long as the lock is up, so when
+        // detection works and nothing unexcluded is audible, stop here rather
+        // than send Apple Events to every running player.
+        if AudioActivity.isSupported && playing.isEmpty { return paused }
+        paused.sourcesAtInterruption = playing.map(\.displayName)
+
+        if settings.useAppleScript {
+            let players = await scripts.playingPlayers(excluding: excluded)
+            for player in players where await scripts.pause(player) {
+                paused.pausedPlayers.append(player.bundleIdentifier)
+            }
+            needsAutomationPermission = await scripts.hasDeniedPlayers
+        }
+
+        if settings.useMediaRemote, bridge.canSendCommands {
+            // Players paused by script on an earlier pass go on reporting
+            // output for a second or two. Counting them as unhandled would
+            // record MediaRemote evidence that is not real, and the resume
+            // would then send a play to whatever holds Now Playing.
+            let handled = Set(paused.pausedPlayers).union(active?.pausedPlayers ?? [])
+            let unhandled = playing.filter { source in
+                guard let bundleID = source.bundleIdentifier else { return true }
+                return !handled.contains(bundleID)
+            }
+
+            // The same decision as performInterrupt.
+            let shouldPause: Bool
+            if !unhandled.isEmpty {
+                shouldPause = true
+            } else if !allPlaying.isEmpty {
+                shouldPause = false
+            } else {
+                shouldPause = !AudioActivity.isSupported
+            }
+
+            if shouldPause {
+                let nowPlaying = await bridge.nowPlaying()
+                let ownerExcluded = nowPlaying?.bundleIdentifier.map(excluded.contains) ?? false
+                let handledByScript = nowPlaying?.bundleIdentifier.map(handled.contains) ?? false
+                // An explicit pause, never a toggle.
+                if !ownerExcluded && !handledByScript && bridge.send(.pause) {
+                    paused.sentMediaRemotePause = true
+                    paused.mediaRemoteStoppedAudio = !unhandled.isEmpty
+                    paused.nowPlayingDescription = nowPlaying?.displayDescription
+                        ?? unhandled.first.map(\.displayName)
+                }
+            }
+        }
+
+        // Nothing that could be put back: leave the record as it is.
+        guard paused.didAnything else { return paused }
+
+        var merged = active ?? MediaInterruption()
+        for bundleID in paused.pausedPlayers where !merged.pausedPlayers.contains(bundleID) {
+            merged.pausedPlayers.append(bundleID)
+        }
+        if paused.sentMediaRemotePause { merged.sentMediaRemotePause = true }
+        if paused.mediaRemoteStoppedAudio { merged.mediaRemoteStoppedAudio = true }
+        for name in paused.sourcesAtInterruption where !merged.sourcesAtInterruption.contains(name) {
+            merged.sourcesAtInterruption.append(name)
+        }
+        if merged.nowPlayingDescription == nil {
+            merged.nowPlayingDescription = paused.nowPlayingDescription
+        }
+        active = merged
+        log.info("prayer lock paused media: \(paused.summary ?? "playback", privacy: .public)")
+        return paused
+    }
+
     /// Put back what we took away.
     ///
     /// Only players we actually paused are resumed, and a bare MediaRemote pause

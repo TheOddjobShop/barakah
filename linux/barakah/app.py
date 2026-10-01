@@ -13,7 +13,7 @@ from typing import Callable, Optional
 
 from gi.repository import GLib
 
-from . import autostart
+from . import autostart, tracker
 from .audio import AthanLibrary, AudioService, Chime, Normalizer
 from .engine import PrayerEvent, ScheduledPrayer, add_days, place_zone, start_of_day
 from .location import LocationService
@@ -21,7 +21,8 @@ from .media import MediaController
 from .model import PRAYERS, PlaceSetting, SettingsData, mutes_output, pauses_players
 from .notify import NotificationService
 from .scheduler import Scheduler
-from .store import SettingsStore
+from .store import PrayerLogStore, SettingsStore
+from .tracker import LockState, PrayerWindow
 
 log = logging.getLogger("barakah.app")
 
@@ -29,10 +30,16 @@ log = logging.getLogger("barakah.app")
 # athan — about the length of a spoken adhan.
 SILENT_ATHAN_LENGTH = 120
 
+# How often the prayer lock is re-derived. It is state, not an event: asking
+# often is what makes a restart, a resume or a clock change bring it back.
+LOCK_CHECK_SECONDS = 2
+
 
 class AppState:
-    def __init__(self, store: Optional[SettingsStore] = None):
+    def __init__(self, store: Optional[SettingsStore] = None, prayer_log: Optional[PrayerLogStore] = None):
         self.store = store or SettingsStore()
+        self.prayer_log = prayer_log or PrayerLogStore()
+        self.lock = LockState(None, None)
         self.scheduler = Scheduler(self.store.data)
         self.audio = AudioService()
         self.media = MediaController()
@@ -46,6 +53,8 @@ class AppState:
         self.interruption_summary: Optional[str] = None
 
         self._resume_source = 0
+        self._resume_deferred = False
+        self._lock_source = 0
         self._last_notification_refresh: Optional[float] = None
         self._listeners: list[Callable[[], None]] = []
 
@@ -89,8 +98,13 @@ class AppState:
             autostart.set_enabled(self.settings.launch_at_login)
         self.refresh_notifications(force=True)
         self.scheduler.rebuild()
+        self.check_lock()
+        self._lock_source = GLib.timeout_add_seconds(LOCK_CHECK_SECONDS, lambda: (self.check_lock(), True)[1])
 
     def shutdown(self) -> None:
+        if self._lock_source:
+            GLib.source_remove(self._lock_source)
+            self._lock_source = 0
         self.audio.stop(notify=False)
         # Muting must never outlive the app; paused players are left paused.
         if self.media.active is not None and self.media.active.muted_output:
@@ -119,6 +133,7 @@ class AppState:
     def _propagate(self) -> None:
         self.scheduler.update(self.settings)
         self.refresh_notifications(force=True)
+        self.check_lock(notify=False)
         self.changed()
 
     def refresh_notifications(self, force: bool = False) -> None:
@@ -218,6 +233,10 @@ class AppState:
 
         def fire() -> bool:
             self._resume_source = 0
+            if self.lock.active is not None:
+                # Nothing plays under the prayer lock; resume once it lifts.
+                self._resume_deferred = True
+                return False
             self.media.resume()
             self.interruption_summary = None
             self.changed()
@@ -232,6 +251,7 @@ class AppState:
 
     def resume_media_now(self) -> None:
         self._cancel_resume()
+        self._resume_deferred = False
         self.media.resume()
         self.interruption_summary = None
         self.changed()
@@ -267,6 +287,53 @@ class AppState:
     def seconds_until_tomorrow(self) -> float:
         tz = place_zone(self.settings.active_place)
         return add_days(start_of_day(time.time(), tz), 1, tz) - time.time()
+
+    # MARK: - Prayer tracker and lock
+
+    def check_lock(self, notify: bool = True) -> None:
+        state = tracker.lock_state(time.time(), self.settings, self.prayer_log.log, self.scheduler.engine)
+        paused = self.media.pause_playing(self.settings) if state.active is not None else 0
+        if paused:
+            self.interruption_summary = self.media.active.summary if self.media.active else None
+        if state == self.lock:
+            if paused and notify:
+                self.changed()
+            return
+        lifted = self.lock.active is not None and state.active is None
+        if state.active != self.lock.active:
+            log.info("prayer lock %s", f"on for {state.active.kind}" if state.active else "off")
+        self.lock = state
+        if lifted and self._resume_deferred:
+            self._resume_deferred = False
+            self.media.resume()
+            self.interruption_summary = None
+        if notify:
+            self.changed()
+
+    @property
+    def current_window(self) -> Optional[PrayerWindow]:
+        return tracker.window_at(time.time(), self.settings, self.scheduler.engine)
+
+    def status_of(self, window: PrayerWindow) -> str:
+        return tracker.status(self.prayer_log.log, window, time.time())
+
+    def confirm_prayed(self, window: PrayerWindow) -> None:
+        """The oath. Inside the window it is on time; after it, qada."""
+        self.prayer_log.record(window.day, window.kind, tracker.status_for_record(window, time.time()))
+        self.check_lock(notify=False)
+        self.changed()
+
+    def set_status(self, day: str, prayer: str, status: Optional[str]) -> None:
+        """Correct the record from the tracker: qada, excused, or cleared."""
+        if status is None:
+            self.prayer_log.clear(day, prayer)
+        else:
+            self.prayer_log.record(day, prayer, status)
+        self.check_lock(notify=False)
+        self.changed()
+
+    def history(self, days: int) -> list:
+        return tracker.history(self.prayer_log.log, self.settings, time.time(), days, self.scheduler.engine)
 
     # MARK: - Display state
 

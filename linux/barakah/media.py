@@ -328,6 +328,31 @@ class MediaController:
         log.info("interrupted media: %s", interruption.summary or "nothing was playing")
         return interruption
 
+    def pause_playing(self, settings: SettingsData) -> int:
+        """Pause whatever is playing now, adding it to the interruption on
+        record rather than replacing it. The prayer lock calls this every few
+        seconds, so media started under the lock is caught too."""
+        if not (settings.use_media_remote and self.mpris.available):
+            return 0
+        excluded = {x.lower() for x in settings.media_excluded_bundle_ids}
+        paused = 0
+        for player in self.mpris.players():
+            if player.status != "Playing" or not player.can_pause:
+                continue
+            if player.short_name.lower() in excluded or player.identity.lower() in excluded:
+                continue
+            if not self.mpris.send(player.bus_name, "Pause"):
+                continue
+            if self.active is None:
+                self.active = MediaInterruption()
+            if all(bus != player.bus_name for bus, _ in self.active.paused_players):
+                self.active.paused_players.append((player.bus_name, player.identity))
+            self.active.now_playing_description = self.active.now_playing_description or player.description
+            paused += 1
+        if paused:
+            log.info("paused media for the prayer lock: %s", self.active.summary)
+        return paused
+
     def resume(self, force: bool = False) -> None:
         interruption = self.active
         if interruption is None:

@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBar: MenuBarController?
     private var settingsWindow: NSWindow?
     private var welcomeWindow: NSWindow?
+    private var trackerWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -34,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let controller = MenuBarController(app: state)
         controller.onOpenSettings = { [weak self] in self?.showSettings() }
+        controller.onOpenTracker = { [weak self] in self?.showTracker() }
         self.menuBar = controller
 
         Task {
@@ -90,11 +92,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    /// Quitting is not a way out of the prayer lock: while it is up, ⌘Q from
+    /// the app's own menu is refused. The overlay's presentation options already
+    /// refuse Force Quit, logout and restart.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if app?.lock.active != nil { return .terminateCancel }
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Never leave the user's media paused or their output muted because the
         // app went away mid-athan.
         app?.media.forget()
         app?.scheduler.invalidate()
+        app?.stopLockChecks()
         app?.flush()
         menuBar?.invalidate()
     }
@@ -127,6 +138,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
+
+    func showTracker() {
+        guard let app else { return }
+
+        if let window = trackerWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        // The same plain construction as the settings window, for the reason
+        // given in showWelcome.
+        let hosting = NSHostingController(rootView: TrackerView(app: app))
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Prayer Tracker"
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.delegate = self
+
+        trackerWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
 }
 
 extension AppDelegate: NSWindowDelegate {
@@ -139,6 +174,11 @@ extension AppDelegate: NSWindowDelegate {
             app?.updateSettings { $0.hasCompletedOnboarding = true }
             welcomeWindow = nil
             app?.flush()
+            NSApp.setActivationPolicy(.accessory)
+            return
+        }
+
+        if closing === trackerWindow {
             NSApp.setActivationPolicy(.accessory)
             return
         }

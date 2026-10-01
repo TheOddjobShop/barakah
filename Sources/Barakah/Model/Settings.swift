@@ -27,6 +27,39 @@ public enum MenuBarStyle: String, Codable, CaseIterable, Identifiable, Sendable 
     }
 }
 
+/// The prayer heatmap on the desktop. Where it sits is not a setting: screen
+/// coordinates mean nothing on another machine, so each platform keeps its
+/// widget's position to itself (on the Mac, the window's frame autosave).
+///
+/// Stored under its own optional key, `trackerWidget`, shared with the Linux
+/// build: `{"enabled": true}`.
+public struct TrackerWidgetSettings: Codable, Hashable, Sendable {
+    public var enabled: Bool
+
+    public init(enabled: Bool = false) {
+        self.enabled = enabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+    }
+
+    /// Never throws, like `PrayerLockSettings`: a malformed section decodes as
+    /// the default rather than failing the whole of `SettingsData`.
+    public init(from decoder: Decoder) throws {
+        var enabled = false
+        if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+            enabled = ((try? container.decodeIfPresent(Bool.self, forKey: .enabled)) ?? nil) ?? false
+        }
+        self.enabled = enabled
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+    }
+}
+
 /// Serialisable form of everything the user can configure. Kept as a plain
 /// `Codable` struct so persistence is a single encode, and the observable store
 /// below owns exactly one of them.
@@ -88,7 +121,39 @@ public struct SettingsData: Codable, Hashable, Sendable {
     public var launchAtLogin: Bool = false
     public var hasCompletedOnboarding: Bool = false
 
+    // MARK: Prayer lock
+    /// Nil until first configured. It must stay Optional: the synthesized
+    /// decoder treats a missing non-optional key as an error, which would make
+    /// every settings file written before the lock existed fail to load. Nil
+    /// also encodes as no key at all, exactly as the Linux build writes it.
+    public var prayerLock: PrayerLockSettings?
+
+    // MARK: Desktop widget
+    /// Nil until first configured, and Optional for the same reason as
+    /// `prayerLock`: a settings file from before the widget must still load.
+    public var trackerWidget: TrackerWidgetSettings?
+
     public init() {}
+
+    /// The lock settings in force, defaults included.
+    public var lock: PrayerLockSettings { prayerLock ?? PrayerLockSettings() }
+
+    /// Change the lock settings, materialising them on first change.
+    public mutating func updateLock(_ mutate: (inout PrayerLockSettings) -> Void) {
+        var updated = lock
+        mutate(&updated)
+        prayerLock = updated
+    }
+
+    /// The desktop widget settings in force, defaults included.
+    public var widget: TrackerWidgetSettings { trackerWidget ?? TrackerWidgetSettings() }
+
+    /// Change the desktop widget settings, materialising them on first change.
+    public mutating func updateWidget(_ mutate: (inout TrackerWidgetSettings) -> Void) {
+        var updated = widget
+        mutate(&updated)
+        trackerWidget = updated
+    }
 
     public static var defaultPrayerConfigs: [PrayerKind: PrayerConfig] {
         var configs: [PrayerKind: PrayerConfig] = [:]

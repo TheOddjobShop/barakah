@@ -160,6 +160,79 @@ struct IqamaRuleEditor: View {
     }
 }
 
+// MARK: - Lock
+
+/// The prayer lock: whether the screen is covered at prayer times, for which
+/// prayers, and after how long. Every change goes through AppState so the lock
+/// is re-derived at once.
+struct LockSettingsView: View {
+    @Bindable var app: AppState
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Lock the screen at prayer times", isOn: Binding(
+                    get: { app.settings.lock.enabled },
+                    set: { value in app.updateLock { $0.enabled = value } }
+                ))
+                Text("Once the grace period has passed, the screen is covered until you confirm you prayed, or the prayer's time ends. Confirming early from the menu bar prevents the lock.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(PrayerKind.prayers) { kind in
+                Section(kind.name) {
+                    Toggle("Lock for \(kind.name)", isOn: Binding(
+                        get: { app.settings.lock.rule(for: kind).enabled },
+                        set: { value in app.updateLock { $0.updateRule(for: kind) { $0.enabled = value } } }
+                    ))
+
+                    if app.settings.lock.rule(for: kind).enabled {
+                        Stepper(
+                            value: Binding(
+                                get: { app.settings.lock.rule(for: kind).graceMinutes },
+                                set: { value in
+                                    app.updateLock { $0.updateRule(for: kind) { $0.graceMinutes = max(0, value) } }
+                                }
+                            ),
+                            in: 0...120
+                        ) {
+                            let minutes = app.settings.lock.rule(for: kind).graceMinutes
+                            LabeledContent("Grace period") {
+                                Text("\(minutes) minutes after the athan")
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .disabled(!app.settings.lock.enabled)
+            }
+
+            Section {
+                Button("Preview the lock") { app.previewLock() }
+                    .disabled(app.lock.active != nil || app.lockPreview != nil)
+                Text("The preview records nothing and lifts by itself after a minute.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Tracker") {
+                Toggle("Show the prayer heatmap on the desktop", isOn: Binding(
+                    get: { app.settings.widget.enabled },
+                    set: { value in app.updateWidget { $0.enabled = value } }
+                ))
+                Text("A year of prayer, as GitHub draws contributions, below your windows on every Space. Drag it where you want it; right-click it to open the tracker or remove it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
 // MARK: - Athan
 
 struct AthanSettingsView: View {

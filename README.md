@@ -182,6 +182,41 @@ mastered nowhere near each other — measured examples run from −27 dBFS to
 means nothing and your athan either startles you or goes unheard. Barakah
 measures each file once and adjusts, so the slider does what it says.
 
+## The prayer lock and tracker
+
+Turn on **Settings → Lock** and the computer stops being something you can use
+through a prayer. Some minutes after each athan — a grace period you set per
+prayer — every screen is covered, and the cover only lifts when you click
+**"Wallahi, I prayed Dhuhr"**, or when Dhuhr's time ends. If you pray before the
+grace period runs out, say so from the menu (*I prayed Dhuhr*) and the cover
+never appears.
+
+The lock is worked out from the time and your record, not fired by a timer, so
+quitting Barakah, restarting, or sleeping the machine through the moment does
+not get you out of it: the next time Barakah runs inside that prayer's time, the
+cover is back. Prayers end where the next begins — Fajr at sunrise, Isha at the
+next Fajr.
+
+Every oath goes into the **prayer tracker** (*Prayer tracker…* in the menu): your
+streak and longest streak, how much you prayed on time this week, this month
+and this year, and the year itself drawn the way GitHub draws contributions —
+a square a day, greener the more of it was kept. Prayers on time and prayers
+not owed count whole; one made up later counts half. Hover a day for what it
+held; click it to see its five prayers, and correct anything the lock could
+not see — prayed at the masjid with the laptop shut, made up later, or not
+owed. A prayer whose time ended with nothing recorded counts as missed;
+prayers from before you started tracking count as nothing.
+
+The same heatmap can live on your desktop (**Settings → Lock → Show the prayer
+heatmap on the desktop**): a small GitHub-dark card below your windows, on every
+workspace. Drag it where you want it; right-click it to open the tracker or
+take it away. On the Mac it is a desktop-level window rather than a
+Notification Centre widget, which would need an Xcode-built app extension.
+
+The record is `prayer-log.json` beside the settings, in the same format on both
+systems. `barakah --preview-lock` shows the cover as it will look, records
+nothing, and lifts after a minute.
+
 ## Keeping time when macOS does not
 
 A prayer reminder is only as good as its worst day, so the scheduler is built
@@ -205,6 +240,7 @@ around the ways long-lived timers actually fail:
 | **Iqama** | Per-prayer rule and reminder; Jumu'ah override |
 | **Athan** | Sound, volume, which prayers sound, the floating window |
 | **Media** | Per-prayer behaviour, resume policy, and a live capability probe |
+| **Lock** | The prayer lock, per-prayer grace periods, a preview, the tracker and its desktop heatmap |
 | **General** | Launch at login, menu bar format, 24-hour clock, Hijri date |
 
 Settings live in `~/Library/Application Support/Barakah/settings.json` as plain,
@@ -287,6 +323,10 @@ unchanged. Your own recordings go in `~/.local/share/barakah/Athan/`.
 - **"Pause and mute" mutes other apps, not the speakers.** Muting the output
   device on Linux would silence the athan too; muting each other stream does
   what the Mac's device mute is for.
+- **The prayer lock holds the keyboard on X11 only.** On an X11 session the
+  cover takes the whole keyboard and pointer, so Alt+Tab, Super and every other
+  shortcut stop working until you confirm. Wayland lets no app do that; there
+  the cover is a full-screen window and the shell's own shortcuts still work.
 - **Audio activity is honest.** MPRIS players report whether they are really
   playing, so Barakah always knows what it paused and resumes exactly that.
 
